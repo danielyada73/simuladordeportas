@@ -1,0 +1,27 @@
+# Dependências e configurações
+node_modules/
+.env
+*.env.local
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Imagens temporárias geradas
+temp/
+output/
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# Builds
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
