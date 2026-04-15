@@ -23,7 +23,7 @@ from config import GEMINI_API_KEY, REPLICATE_API_TOKEN, TEMP_IMAGE_DIR
 logger = logging.getLogger(__name__)
 
 # ─── Prompt de geração ───────────────────────────────────────────────────────
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 GENERATION_PROMPT = (
     "You are an expert interior design visualizer. "
@@ -103,93 +103,82 @@ def generate_with_gemini(ambiente_source: str, porta_source: str) -> tuple[Optio
 
 
 
-# ─── Gerador Secundário / Fallback (OPENAI) ──────────────────────────────────
+# ─── Gerador Secundário / Fallback (Nano Banana) ───────────────────────────
 
-def generate_with_openai(ambiente_source: str, porta_source: str, token: str) -> tuple[Optional[bytes], str]:
+def generate_with_nanobanana(ambiente_source: str, porta_source: str, token: str) -> tuple[Optional[bytes], str]:
     """
-    Usa o DALL-E 3 da OpenAI (ChatGPT) para gerar uma arquitetura incrível da porta.
-    Como a API do DALL-E 3 gera via texto, montamos um prompt de alta qualidade.
+    Usa o modelo experimental 'nano-banana-pro-preview' através do Google Generative AI.
     """
-    from openai import OpenAI
+    import google.generativeai as genai
+    import io
+    import PIL.Image as PILImage
     import base64
     
-    logger.info("Iniciando geração com OpenAI (DALL-E 3)...")
+    logger.info("Iniciando geração com Nano Banana...")
     
     if not token:
-        return None, "OPENAI_API_KEY não configurada na nuvem!"
+        return None, "GEMINI_API_KEY não configurada na nuvem!"
         
     try:
-        client = OpenAI(api_key=token)
+        genai.configure(api_key=token)
         
-        # Passo 1: Converter as imagens para JSON/Base64 para a API do GPT-4o 'enxergar'
         ambiente_bytes = _load_image(ambiente_source)
         porta_bytes = _load_image(porta_source)
-        
-        env_b64 = base64.b64encode(ambiente_bytes).decode('utf-8')
-        door_b64 = base64.b64encode(porta_bytes).decode('utf-8')
-        
-        logger.info("Enviando imagens (JSON) para a Visão do GPT-4o mapear a fusão...")
-        
-        # Pedimos para a Inteligência analisar a foto da casa e da porta
-        vision_response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Image 1 is a photo of a real room/environment. Image 2 is a reference photo for a door. Write a highly detailed, photorealistic prompt for DALL-E 3 that recreates the EXACT same room from Image 1 (same lighting, walls, floor, camera angle, furniture if visible), but perfectly installs the door from Image 2 into the frame. Start directly with the prompt, no conversational text."},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{env_b64}"}
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{door_b64}"}
-                        }
-                    ]
-                }
-            ],
-            max_tokens=500
+
+        img_ambiente = PILImage.open(io.BytesIO(ambiente_bytes))
+        img_porta    = PILImage.open(io.BytesIO(porta_bytes))
+
+        model = genai.GenerativeModel(
+            model_name="nano-banana-pro-preview",
+        )
+
+        prompt = (
+            "You are an expert interior design visualizer. "
+            "I have provided an image of a real room/environment (Image 1) and a reference image of a door (Image 2). "
+            "Please generate a beautiful photorealistic image showing the exact same room but with the new door perfectly installed in the frame. "
+            "Do not return text, only generate the requested image."
+        )
+
+        response = model.generate_content(
+            [prompt, img_ambiente, img_porta]
         )
         
-        prompt_apresentacao = vision_response.choices[0].message.content.strip()
-        logger.info(f"O GPT-4o extraiu os detalhes em texto: {prompt_apresentacao}")
-        
-        # Passo 2: Mandar o JSON de Instruções exatas para o DALL-E Gerar
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt_apresentacao,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-            response_format="b64_json"
-        )
-        
-        img_b64 = response.data[0].b64_json
-        img_bytes = base64.b64decode(img_b64)
-        
-        logger.info("Imagem visual de MVP gerada com sucesso via OpenAI DALL-E 3!")
-        return img_bytes, ""
-        
-    except Exception as e:
-        logger.error(f"OpenAI Exception: {e}")
-        
-        # Fallback de Emergência Total caso o DALL-E falhe
+        # 1. Checa se retornou a imagem diretamente no objeto de dados
+        try:
+            if hasattr(response, "candidates") and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, "inline_data") and part.inline_data:
+                        logger.info("Imagem retornada nativamente via inline_data.")
+                        return part.inline_data.data, ""
+        except:
+            pass
+            
+        # 2. Checa se o modelo por ser experimental retornou Base64 no texto (comum em pre-releases)
+        if response.text and (response.text.startswith("iVBORw0") or response.text.startswith("/9j/")):
+            logger.info("Imagem retornada nativamente via texto Base64.")
+            return base64.b64decode(response.text.strip()), ""
+            
+        # 3. Fallback de Emergência
+        logger.warning(f"Nano Banana não respondeu com formato de imagem padrão. Resposta: {response.text[:200]}")
         import requests
         import urllib.parse
-        logger.warning("Acionando Fallback de Emergência gratuito...")
+        logger.warning("Acionando Fallback de Emergência Pollinations...")
         prompt_emergencia = urllib.parse.quote("Real estate ultra realistic interior photography showing a premium modern beautiful wooden door inside a stylish living room entrance. 4k resolution.")
         url_emergencia = f"https://image.pollinations.ai/prompt/{prompt_emergencia}?width=1024&height=1024&nologo=true"
         
         try:
             resp_emerg = requests.get(url_emergencia, timeout=30)
             if resp_emerg.status_code == 200:
-                logger.info("Imagem visual gerada pelo motor reserva de emergência!")
                 return resp_emerg.content, ""
         except:
             pass
             
-        return None, f"OpenAI falhou e fallback falhou: {str(e)}"
+        return None, f"Nano Banana retornou texto inesperado: {response.text[:100]}"
+
+    except Exception as e:
+        logger.error(f"Erro no Nano Banana: {e}")
+        return None, str(e)
+
 
 def generate_with_replicate(ambiente_source: str, porta_source: str) -> Optional[bytes]:
     """
@@ -322,5 +311,5 @@ def generate_door_simulation(
     """
     Gera a simulação da porta no ambiente.
     """
-    logger.info("Usando OpenAI como motor principal...")
-    return generate_with_openai(ambiente_source, porta_source, OPENAI_API_KEY)
+    logger.info("Usando Nano Banana Pro como motor principal...")
+    return generate_with_nanobanana(ambiente_source, porta_source, GEMINI_API_KEY)
