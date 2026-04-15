@@ -121,12 +121,41 @@ def generate_with_openai(ambiente_source: str, porta_source: str, token: str) ->
     try:
         client = OpenAI(api_key=token)
         
-        prompt_apresentacao = (
-            "A breathtakingly realistic, ultra high definition real estate interior photography "
-            "of a premium modern beautiful wooden door installed perfectly inside a stylish room. "
-            "Perfect lighting, ray tracing, architectural digest style, pristine details."
+        # Passo 1: Converter as imagens para JSON/Base64 para a API do GPT-4o 'enxergar'
+        ambiente_bytes = _load_image(ambiente_source)
+        porta_bytes = _load_image(porta_source)
+        
+        env_b64 = base64.b64encode(ambiente_bytes).decode('utf-8')
+        door_b64 = base64.b64encode(porta_bytes).decode('utf-8')
+        
+        logger.info("Enviando imagens (JSON) para a Visão do GPT-4o mapear a fusão...")
+        
+        # Pedimos para a Inteligência analisar a foto da casa e da porta
+        vision_response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Image 1 is a photo of a real room/environment. Image 2 is a reference photo for a door. Write a highly detailed, photorealistic prompt for DALL-E 3 that recreates the EXACT same room from Image 1 (same lighting, walls, floor, camera angle, furniture if visible), but perfectly installs the door from Image 2 into the frame. Start directly with the prompt, no conversational text."},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{env_b64}"}
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{door_b64}"}
+                        }
+                    ]
+                }
+            ],
+            max_tokens=500
         )
         
+        prompt_apresentacao = vision_response.choices[0].message.content.strip()
+        logger.info(f"O GPT-4o extraiu os detalhes em texto: {prompt_apresentacao}")
+        
+        # Passo 2: Mandar o JSON de Instruções exatas para o DALL-E Gerar
         response = client.images.generate(
             model="dall-e-3",
             prompt=prompt_apresentacao,
