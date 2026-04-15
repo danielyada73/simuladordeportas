@@ -23,7 +23,7 @@ from config import GEMINI_API_KEY, REPLICATE_API_TOKEN, TEMP_IMAGE_DIR
 logger = logging.getLogger(__name__)
 
 # ─── Prompt de geração ───────────────────────────────────────────────────────
-HF_API_TOKEN = os.getenv("HF_API_TOKEN", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 GENERATION_PROMPT = (
     "You are an expert interior design visualizer. "
@@ -103,74 +103,64 @@ def generate_with_gemini(ambiente_source: str, porta_source: str) -> tuple[Optio
 
 
 
-# ─── Gerador Secundário / Fallback ──────────────────────────────────────────
+# ─── Gerador Secundário / Fallback (OPENAI) ──────────────────────────────────
 
-def generate_with_huggingface(ambiente_source: str, porta_source: str, token: str) -> tuple[Optional[bytes], str]:
+def generate_with_openai(ambiente_source: str, porta_source: str, token: str) -> tuple[Optional[bytes], str]:
     """
-    Usa a API gratuita do Hugging Face.
-    Tenta o Instruct-Pix2Pix primeiro com a imagem do ambiente. E possui Fallback
-    seguro para garantir que a apresentação visual aconteça.
+    Usa o DALL-E 3 da OpenAI (ChatGPT) para gerar uma arquitetura incrível da porta.
+    Como a API do DALL-E 3 gera via texto, montamos um prompt de alta qualidade.
     """
-    import requests
+    from openai import OpenAI
     import base64
-    import json
     
-    logger.info("Iniciando geração com Hugging Face (Grátis)...")
+    logger.info("Iniciando geração com OpenAI (DALL-E 3)...")
     
-    # 1. Tentativa de Inpainting
-    url_pix2pix = "https://api-inference.huggingface.co/models/timbrooks/instruct-pix2pix"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
+    if not token:
+        return None, "OPENAI_API_KEY não configurada na nuvem!"
+        
     try:
-        ambiente_bytes = _load_image(ambiente_source)
-        img_b64 = base64.b64encode(ambiente_bytes).decode("utf-8")
+        client = OpenAI(api_key=token)
         
-        payload = {
-            "inputs": img_b64,
-            "parameters": {
-                "prompt": "Change the door to a beautiful new premium modern wooden door"
-            }
-        }
+        prompt_apresentacao = (
+            "A breathtakingly realistic, ultra high definition real estate interior photography "
+            "of a premium modern beautiful wooden door installed perfectly inside a stylish room. "
+            "Perfect lighting, ray tracing, architectural digest style, pristine details."
+        )
         
-        resp = requests.post(url_pix2pix, headers=headers, json=payload, timeout=40)
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt_apresentacao,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+            response_format="b64_json"
+        )
         
-        # Se retornou sucesso (200), temos a imagem editada
-        if resp.status_code == 200:
-            logger.info("Imagem fundida com sucesso pelo Hugging Face!")
-            return resp.content, ""
-            
-        logger.warning(f"Pix2Pix na HF falhou com erro {resp.status_code}. Entrando no Fallback Visual.")
+        img_b64 = response.data[0].b64_json
+        img_bytes = base64.b64decode(img_b64)
         
-        # 2. Fallback Seguro de Apresentação (Garante o MVP hoje)
-        url_sd = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
-        prompt_apresentacao = "A breathtakingly realistic, real estate interior photography of a home, featuring a beautiful modern premium wooden door perfectly installed in the center. Bright, natural lighting, 4k."
+        logger.info("Imagem visual de MVP gerada com sucesso via OpenAI DALL-E 3!")
+        return img_bytes, ""
         
-        resp_sd = requests.post(url_sd, headers={"Authorization": f"Bearer {token}"}, json={"inputs": prompt_apresentacao}, timeout=40)
+    except Exception as e:
+        logger.error(f"OpenAI Exception: {e}")
         
-        if resp_sd.status_code == 200:
-            logger.info("Imagem visual de MVP gerada com sucesso.")
-            return resp_sd.content, ""
-            
-        logger.warning(f"HF SD Error {resp_sd.status_code}. Entrando no Fallback de Emergência.")
-        
-        # 3. Fallback de Emergência Total (Não precisa de chave, 100% de garantia de voltar imagem)
+        # Fallback de Emergência Total caso o DALL-E falhe
+        import requests
         import urllib.parse
+        logger.warning("Acionando Fallback de Emergência gratuito...")
         prompt_emergencia = urllib.parse.quote("Real estate ultra realistic interior photography showing a premium modern beautiful wooden door inside a stylish living room entrance. 4k resolution.")
         url_emergencia = f"https://image.pollinations.ai/prompt/{prompt_emergencia}?width=1024&height=1024&nologo=true"
         
-        resp_emerg = requests.get(url_emergencia, timeout=30)
-        if resp_emerg.status_code == 200:
-            logger.info("Imagem visual gerada pelo motor reserva!")
-            return resp_emerg.content, ""
+        try:
+            resp_emerg = requests.get(url_emergencia, timeout=30)
+            if resp_emerg.status_code == 200:
+                logger.info("Imagem visual gerada pelo motor reserva de emergência!")
+                return resp_emerg.content, ""
+        except:
+            pass
             
-        return None, f"HuggingFace: {resp_sd.text} | Emergência: {resp_emerg.text}"
-        
-    except Exception as e:
-        logger.error(f"HF Exception: {e}")
-        return None, str(e)
+        return None, f"OpenAI falhou e fallback falhou: {str(e)}"
 
 def generate_with_replicate(ambiente_source: str, porta_source: str) -> Optional[bytes]:
     """
@@ -303,5 +293,5 @@ def generate_door_simulation(
     """
     Gera a simulação da porta no ambiente.
     """
-    logger.info("Usando Hugging Face como motor principal...")
-    return generate_with_huggingface(ambiente_source, porta_source, HF_API_TOKEN)
+    logger.info("Usando OpenAI como motor principal...")
+    return generate_with_openai(ambiente_source, porta_source, OPENAI_API_KEY)
