@@ -17,32 +17,15 @@ from typing import Optional
 
 import httpx
 import requests
-
-from config import GEMINI_API_KEY, REPLICATE_API_TOKEN, TEMP_IMAGE_DIR
+from core.config_base import GEMINI_API_KEY, REPLICATE_API_TOKEN, TEMP_IMAGE_DIR
+from core.config_niche import NICHE, AI_PROMPTS
 
 logger = logging.getLogger(__name__)
 
 # ─── Prompt de geração ───────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-GENERATION_PROMPT = (
-    "You are an expert interior design visualizer. "
-    "You have been given TWO reference images:\n"
-    "  Image 1: The ENVIRONMENT — a real photo of a room/space where a door "
-    "will be installed or replaced.\n"
-    "  Image 2: The DOOR MODEL — a photo of the specific door model the client "
-    "wants to see in their space.\n\n"
-    "Your task:\n"
-    "Replace the existing door visible in Image 1 with the door from Image 2. "
-    "The final result must be:\n"
-    "- Photorealistic — indistinguishable from a real photo\n"
-    "- Preserve the original lighting, shadows, perspective, and all surrounding elements\n"
-    "- The new door must fit perfectly in the existing door frame (same size, angle, position)\n"
-    "- No distortion, no artifacts, no blurriness\n"
-    "- High resolution output\n"
-    "- Do NOT change anything else in the room — only replace the door.\n\n"
-    "Output ONLY the final composite image with the door replaced."
-)
+GENERATION_PROMPT = AI_PROMPTS["system_instruction"].format(niche=NICHE.lower())
 
 
 def _download_image(url: str) -> bytes:

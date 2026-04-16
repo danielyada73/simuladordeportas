@@ -178,3 +178,81 @@ class SheetsManager:
             return
         self._update_cell(user["_row_index"], "foto_ambiente_url", "")
         self._update_cell(user["_row_index"], "foto_porta_url", "")
+
+    # ─── Métodos para WhatsApp (busca por telefone) ──────────────────
+
+    def _get_row_by_phone(self, phone: str):
+        """Busca linha por telefone."""
+        try:
+            records = self._ws.get_all_records()
+            for i, row in enumerate(records, start=2):
+                if str(row.get("telefone")) == str(phone):
+                    row["_row_index"] = i
+                    return row
+            return None
+        except Exception as e:
+            logger.error(f"Erro ao buscar telefone {phone}: {e}")
+            return None
+
+    def get_user(self, chat_id: int = None, phone_number: str = None):
+        """Busca usuário por chat_id OU telefone."""
+        if chat_id:
+            return self._get_row_by_chat_id(chat_id)
+        if phone_number:
+            return self._get_row_by_phone(phone_number)
+        return None
+
+    def create_user_whatsapp(self, phone: str, plano: str = "beta"):
+        """Cria usuário vindo do WhatsApp."""
+        now = datetime.now().strftime("%d/%m/%Y %H:%M")
+        credits = PLANS.get(plano, PLANS[DEFAULT_PLAN])["credits"]
+        new_row = {
+            "chat_id":            "",
+            "nome":               "",
+            "telefone":           phone,
+            "email":              "",
+            "plano":              plano,
+            "creditos_restantes": credits,
+            "total_geracoes":     0,
+            "estado":             "AGUARDANDO_AMBIENTE",
+            "foto_ambiente_url":  "",
+            "foto_porta_url":     "",
+            "data_cadastro":      now,
+            "ultimo_contato":     now,
+        }
+        self._ws.append_row([new_row[col] for col in COLUMNS])
+        logger.info(f"Novo usuário WhatsApp: {phone} — plano {plano}")
+        return new_row
+
+    def update_state_whatsapp(self, phone: str, state: str):
+        user = self._get_row_by_phone(phone)
+        if not user: return
+        self._update_cell(user["_row_index"], "estado", state)
+        self._update_cell(user["_row_index"], "ultimo_contato",
+                          datetime.now().strftime("%d/%m/%Y %H:%M"))
+
+    def save_name_whatsapp(self, phone: str, nome: str):
+        user = self._get_row_by_phone(phone)
+        if not user: return
+        self._update_cell(user["_row_index"], "nome", nome)
+
+    def save_image_url_whatsapp(self, phone: str, field: str, url: str):
+        user = self._get_row_by_phone(phone)
+        if not user: return
+        self._update_cell(user["_row_index"], field, url)
+
+    def deduct_credit_whatsapp(self, phone: str) -> int:
+        user = self._get_row_by_phone(phone)
+        if not user: return 0
+        current = int(user.get("creditos_restantes", 0))
+        total = int(user.get("total_geracoes", 0))
+        new_credits = max(0, current - 1)
+        self._update_cell(user["_row_index"], "creditos_restantes", new_credits)
+        self._update_cell(user["_row_index"], "total_geracoes", total + 1)
+        return new_credits
+
+    def reset_images_whatsapp(self, phone: str):
+        user = self._get_row_by_phone(phone)
+        if not user: return
+        self._update_cell(user["_row_index"], "foto_ambiente_url", "")
+        self._update_cell(user["_row_index"], "foto_porta_url", "")

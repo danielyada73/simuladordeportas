@@ -50,17 +50,81 @@ sheets: SheetsManager = None
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-class DummyHandler(BaseHTTPRequestHandler):
+import json
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))  # Para importar whatsapp/
+from urllib.parse import urlparse, parse_qs
+
+# WhatsApp verify token
+WA_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "simulador2026")
+
+class WebhookHandler(BaseHTTPRequestHandler):
+    """HTTP Handler que serve como keep-alive E webhook do WhatsApp."""
+
     def do_GET(self):
+        parsed = urlparse(self.path)
+
+        # WhatsApp Webhook Verification
+        if parsed.path == "/webhook":
+            params = parse_qs(parsed.query)
+            mode = params.get("hub.mode", [None])[0]
+            token = params.get("hub.verify_token", [None])[0]
+            challenge = params.get("hub.challenge", [None])[0]
+
+            if mode == "subscribe" and token == WA_VERIFY_TOKEN:
+                logger.info("✅ WhatsApp Webhook verificado com sucesso!")
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(challenge.encode())
+                return
+
+            self.send_response(403)
+            self.end_headers()
+            return
+
+        # Keep-alive padrão
         self.send_response(200)
-        self.send_header('Content-type','text/plain')
+        self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"Bot ta on!")
+        self.wfile.write(b"Bot ta on! Telegram + WhatsApp")
+
+    def do_POST(self):
+        if self.path.startswith("/webhook"):
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+
+            # Responder 200 imediatamente (Meta exige resposta rápida)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+
+            # Processar em background
+            try:
+                data = json.loads(body)
+                from whatsapp.handler import process_webhook
+                threading.Thread(
+                    target=process_webhook,
+                    args=(data, sheets),
+                    daemon=True
+                ).start()
+            except Exception as e:
+                logger.error(f"Erro ao processar webhook WhatsApp: {e}")
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        """Silencia logs HTTP padrão para não poluir."""
+        pass
 
 def keep_alive():
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    server = HTTPServer(('0.0.0.0', port), WebhookHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    logger.info(f"🌐 Servidor HTTP rodando na porta {port} (keep-alive + WhatsApp webhook)")
 
 def _feedback_keyboard() -> InlineKeyboardMarkup:
     """Teclado inline para o menu pós-geração."""
