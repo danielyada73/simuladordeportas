@@ -8,6 +8,7 @@ load_dotenv()
 
 # ─── Telegram ────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_ENABLED   = os.getenv("TELEGRAM_ENABLED", "True").lower() == "true"
 
 # ─── Google Sheets ────────────────────────────────────────────────────────────
 GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "")

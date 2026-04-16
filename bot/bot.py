@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_BOT_TOKEN, State, Msg, PLANS, DEFAULT_PLAN, TEMP_IMAGE_DIR
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_ENABLED, State, Msg, PLANS, DEFAULT_PLAN, TEMP_IMAGE_DIR
 from sheets import SheetsManager
 from ai_generator import generate_door_simulation
 
@@ -662,8 +662,15 @@ def main():
     # Erro global
     app.add_error_handler(error_handler)
 
-    logger.info("🚪 Simulador de Portas Bot iniciado. Aguardando mensagens...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    if TELEGRAM_ENABLED:
+        logger.info("🚪 Simulador de Portas Bot iniciado (Telegram Polling). Aguardando mensagens...")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    else:
+        logger.info("⚠️ Bot do Telegram desativado via configuração (TELEGRAM_ENABLED=False).")
+        # Mantém o processo vivo se o servidor HTTP estiver rodando
+        import time
+        while True:
+            time.sleep(3600)
 
 
 if __name__ == "__main__":
