@@ -117,6 +117,33 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 logger.error(f"Erro ao processar webhook WhatsApp: {e}")
             return
 
+        elif self.path == "/kiwify":
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            
+            try:
+                data = json.loads(body)
+                order_status = data.get("order_status")
+                
+                # Kiwify usa 'paid' ou 'approved' dependendo da versão/evento
+                if order_status in ["paid", "approved"]:
+                    phone = data.get("customer_mobile")
+                    email = data.get("customer_email")
+                    
+                    if phone:
+                        logger.info(f"💰 Venda confirmada via Kiwify: {email} / {phone}")
+                        # Atualiza no Sheets
+                        sheets.set_plan_by_phone(phone, "omega")
+                
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"status":"received"}')
+            except Exception as e:
+                logger.error(f"Erro ao processar webhook Kiwify: {e}")
+                self.send_response(500)
+                self.end_headers()
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -601,10 +628,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 def main():
     global sheets
 
+    sheets = SheetsManager()
+
     # Ativa o servidor web fake para o Render.com não desligar o bot (Free Tier)
     keep_alive()
-
-    sheets = SheetsManager()
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 

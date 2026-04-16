@@ -35,6 +35,11 @@ COLUMNS = [
     "ultimo_contato",
 ]
 
+def normalize_phone(phone: str) -> str:
+    """Remove caracteres não numéricos e garante apenas os dígitos."""
+    if not phone: return ""
+    return "".join(filter(str.isdigit, str(phone)))
+
 
 class SheetsManager:
     def __init__(self):
@@ -256,3 +261,33 @@ class SheetsManager:
         if not user: return
         self._update_cell(user["_row_index"], "foto_ambiente_url", "")
         self._update_cell(user["_row_index"], "foto_porta_url", "")
+
+    def set_plan_by_phone(self, phone: str, plano: str):
+        """Atualiza o plano e créditos buscando pelo telefone (normalizado)."""
+        clean_phone = normalize_phone(phone)
+        
+        # Primeiro, tentamos buscar exatamente. 
+        # Se falhar, buscamos todos e comparamos os dígitos finais para ser robusto.
+        user = self._get_row_by_phone(clean_phone)
+        
+        if not user:
+            # Busca manual comparando apenas dígitos (caso o número na planilha tenha + ou -)
+            records = self._ws.get_all_records()
+            for i, row in enumerate(records, start=2):
+                if normalize_phone(row.get("telefone")) == clean_phone:
+                    user = row
+                    user["_row_index"] = i
+                    break
+        
+        if not user:
+            logger.warning(f"Usuário não encontrado para atualização de plano (telefone: {phone})")
+            return False
+
+        credits_to_add = PLANS.get(plano, PLANS[DEFAULT_PLAN])["credits"]
+        current = int(user.get("creditos_restantes", 0))
+        new_total = current + credits_to_add
+        
+        self._update_cell(user["_row_index"], "plano", plano)
+        self._update_cell(user["_row_index"], "creditos_restantes", new_total)
+        logger.info(f"Plano atualizado via Telefone: {phone} → {plano}, créditos: {new_total}")
+        return True
