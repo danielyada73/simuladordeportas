@@ -17,15 +17,22 @@ from typing import Optional
 
 import httpx
 import requests
-from core.config_base import GEMINI_API_KEY, REPLICATE_API_TOKEN, TEMP_IMAGE_DIR
-from core.config_niche import NICHE, AI_PROMPTS
 
 logger = logging.getLogger(__name__)
 
 # ─── Prompt de geração ───────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN", "")
+TEMP_IMAGE_DIR = os.path.join(os.path.dirname(__file__), "temp_images")
 
-GENERATION_PROMPT = AI_PROMPTS["system_instruction"].format(niche=NICHE.lower())
+# Prompts dinâmicos — detecta nicho ou usa padrão "portas"
+NICHE = os.getenv("NICHE", "portas")
+GENERATION_PROMPT = (
+    f"Você é um especialista em simulação visual de {NICHE}. "
+    f"Receba a foto do ambiente e a foto do modelo de {NICHE} desejado. "
+    f"Gere uma imagem fotorrealista mostrando o ambiente com o novo modelo de {NICHE} instalado. "
+    "A iluminação, perspectiva e proporções devem ser realistas."
+)
 
 
 def _download_image(url: str) -> bytes:

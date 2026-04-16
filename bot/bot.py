@@ -52,7 +52,9 @@ sheets: SheetsManager = None
 
 import json
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))  # Para importar whatsapp/
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 from urllib.parse import urlparse, parse_qs
 
 # WhatsApp verify token
@@ -109,6 +111,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     args=(data, sheets),
                     daemon=True
                 ).start()
+            except ImportError:
+                logger.warning("whatsapp.handler não disponível — ignorando webhook")
             except Exception as e:
                 logger.error(f"Erro ao processar webhook WhatsApp: {e}")
             return
