@@ -12,6 +12,25 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Alpha OS (Agencia) mode: swap WhatsApp "brain" to Alpha OS commands.
+ALPHA_OS_MODE = str(os.getenv("ALPHA_OS_MODE", "false")).strip().lower() in ("1", "true", "yes", "on")
+_alpha_chat = None
+
+
+def _get_alpha_chat():
+    global _alpha_chat
+    if _alpha_chat is not None:
+        return _alpha_chat
+    try:
+        from alpha_os.chat import AlphaOSChat  # type: ignore
+
+        _alpha_chat = AlphaOSChat()
+        return _alpha_chat
+    except Exception as exc:
+        logger.error(f"Falha ao iniciar Alpha OS: {exc}")
+        _alpha_chat = None
+        return None
+
 # Config do WhatsApp (vem das variáveis de ambiente no Render)
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", os.getenv("PHONE_NUMBER_ID", ""))
@@ -137,6 +156,23 @@ def process_webhook(data: dict, sheets_manager):
         msg_id = message.get("id")
 
         logger.info(f"WhatsApp msg recebida de {phone}, tipo: {msg_type}")
+
+        # Alpha OS takes over text messages when enabled, or when the user sends an Alpha OS command.
+        if msg_type == "text":
+            text = message.get("text", {}).get("body", "").strip()
+            try:
+                from alpha_os.chat import is_alpha_os_command  # type: ignore
+
+                if ALPHA_OS_MODE or is_alpha_os_command(text):
+                    chat = _get_alpha_chat()
+                    if chat is None:
+                        send_text(phone, "Alpha OS indisponivel agora. Verifique GOOGLE_SHEETS_SPREADSHEET_ID e credenciais.")
+                        return
+                    reply = chat.handle(phone, text)
+                    send_text(phone, reply)
+                    return
+            except Exception as exc:
+                logger.error(f"Erro Alpha OS: {exc}")
 
         # Buscar ou criar usuário pela phone
         user = sheets_manager.get_user(phone_number=phone)
