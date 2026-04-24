@@ -15,7 +15,7 @@ from .campaign_ops import (
     readiness_text,
 )
 from .llm import complete_text
-from .monday_client import board_items_with_latest_updates, find_client_boards, latest_update_text
+from .monday_client import board_items_with_latest_updates, find_client_boards, latest_update_text, list_client_groups
 from .store import AlphaOSStore, normalize_client
 
 
@@ -532,10 +532,10 @@ class AlphaOSChat:
             return f"Operacao criada para {client['name']}.\nID: {client['id']}\nProximo: rodar {client['id']} monday"
 
         if t in ("clientes", "listar clientes"):
-            clients = self.store.list_clients()
+            clients = self._list_clients_view()
             if not clients:
                 return "Nenhum cliente criado ainda."
-            return "\n\n".join([f"{c['client_name']}\nID: {c['client_id']}\nStatus: briefing_received" for c in clients[:10]])
+            return "\n\n".join([f"{c['client_name']}\nID: {c['client_id']}\nStatus: {c['status']}" for c in clients[:20]])
 
         if t.startswith("status"):
             term = raw.split(" ", 1)[1].strip() if " " in raw else ""
@@ -719,7 +719,17 @@ class AlphaOSChat:
         client = self.store.find_client(term)
         if client:
             self.store.set_last_client_for_phone(phone, client.get("id"))
-        return client
+            return client
+        monday_client = find_client_boards(term)
+        if monday_client:
+            client = self._virtual_client_from_monday(monday_client)
+            try:
+                self.store.upsert_client(client)
+                self.store.set_last_client_for_phone(phone, client.get("id"))
+            except Exception:
+                pass
+            return client
+        return None
 
     def _resolve_client_from_text(self, phone: str, raw: str) -> Optional[Dict]:
         text = _norm_cmp(raw)
@@ -773,6 +783,37 @@ class AlphaOSChat:
             elif key == "saldo":
                 monday["saldo_board_id"] = board_id
         return client
+
+    def _list_clients_view(self):
+        merged: Dict[str, Dict] = {}
+
+        for item in self.store.list_clients():
+            client_name = str(item.get("client_name") or "").strip()
+            client_id = str(item.get("client_id") or "").strip()
+            key = _norm_cmp(client_name or client_id)
+            if not key:
+                continue
+            merged[key] = {
+                "client_name": client_name or client_id,
+                "client_id": client_id,
+                "status": "briefing_received",
+            }
+
+        try:
+            for entry in list_client_groups():
+                client = self._virtual_client_from_monday(entry)
+                key = _norm_cmp(client.get("name") or client.get("id"))
+                merged[key] = {
+                    "client_name": client.get("name") or client.get("id"),
+                    "client_id": client.get("id") or "",
+                    "status": client.get("status") or "monday_only",
+                }
+        except Exception:
+            pass
+
+        items = list(merged.values())
+        items.sort(key=lambda item: _norm_cmp(item.get("client_name", "")))
+        return items
 
     def _ensure_monday_client(self, client: Dict) -> Dict:
         artifacts = client.setdefault("artifacts", {})

@@ -59,7 +59,24 @@ def _extract_client_name(board_name: str) -> Optional[str]:
     return None
 
 
-def find_client_boards(search_text: str, limit: int = 500) -> Optional[Dict[str, Any]]:
+def _typed_boards(boards: List[Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+    typed: Dict[str, Dict[str, str]] = {}
+    for board in boards:
+        normalized_name = _norm(board["name"])
+        if "1. briefing" in normalized_name:
+            typed["briefing"] = board
+        elif "2. criacao de lp" in normalized_name or "2. criação de lp" in normalized_name:
+            typed["lp"] = board
+        elif "3. campanhas" in normalized_name:
+            typed["campanhas"] = board
+        elif "4. otimizacoes" in normalized_name or "4. otimizações" in normalized_name:
+            typed["otimizacoes"] = board
+        elif "5. saldo" in normalized_name:
+            typed["saldo"] = board
+    return typed
+
+
+def list_client_groups(limit: int = 500) -> List[Dict[str, Any]]:
     boards = list_boards(limit=limit)
     groups: Dict[str, Dict[str, Any]] = {}
 
@@ -71,6 +88,21 @@ def find_client_boards(search_text: str, limit: int = 500) -> Optional[Dict[str,
         entry = groups.setdefault(key, {"client_name": client_name, "boards": []})
         entry["boards"].append(board)
 
+    results: List[Dict[str, Any]] = []
+    for _, entry in groups.items():
+        results.append(
+            {
+                "client_name": entry["client_name"],
+                "boards": _typed_boards(entry["boards"]),
+            }
+        )
+
+    results.sort(key=lambda item: _norm(item.get("client_name", "")))
+    return results
+
+
+def find_client_boards(search_text: str, limit: int = 500) -> Optional[Dict[str, Any]]:
+    groups = {_norm(item.get("client_name", "")): item for item in list_client_groups(limit=limit)}
     query = _norm(search_text)
     if not query:
         return None
@@ -92,21 +124,7 @@ def find_client_boards(search_text: str, limit: int = 500) -> Optional[Dict[str,
     if best_score <= 0:
         return None
 
-    typed_boards: Dict[str, Dict[str, str]] = {}
-    for board in best["boards"]:
-        normalized_name = _norm(board["name"])
-        if "1. briefing" in normalized_name:
-            typed_boards["briefing"] = board
-        elif "2. criacao de lp" in normalized_name or "2. criação de lp" in normalized_name:
-            typed_boards["lp"] = board
-        elif "3. campanhas" in normalized_name:
-            typed_boards["campanhas"] = board
-        elif "4. otimizacoes" in normalized_name or "4. otimizações" in normalized_name:
-            typed_boards["otimizacoes"] = board
-        elif "5. saldo" in normalized_name:
-            typed_boards["saldo"] = board
-
-    return {"client_name": best["client_name"], "boards": typed_boards}
+    return {"client_name": best["client_name"], "boards": best.get("boards") or {}}
 
 
 def board_items_with_latest_updates(board_id: str, limit: int = 200) -> List[Dict[str, str]]:
