@@ -168,7 +168,10 @@ def _strip_accents(text: str) -> str:
 
 
 def _norm_cmp(text: str) -> str:
-    return re.sub(r"\s+", " ", _strip_accents(text).strip().lower())
+    t = _strip_accents(text).strip().lower()
+    t = re.sub(r"\s*-\s*", "-", t)
+    t = re.sub(r"\s+", " ", t)
+    return t
 
 
 def _monday_token() -> str:
