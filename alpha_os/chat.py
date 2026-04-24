@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import unicodedata
@@ -15,8 +14,9 @@ from .campaign_ops import (
     publish_meta,
     readiness_text,
 )
-from .monday_client import latest_update_text
-from .store import AlphaOSStore
+from .llm import complete_text
+from .monday_client import board_items_with_latest_updates, find_client_boards, latest_update_text
+from .store import AlphaOSStore, normalize_client
 
 
 STAGES = {
@@ -76,6 +76,7 @@ def is_alpha_os_command(text: str) -> bool:
         return False
     return (
         t in ("ajuda", "help", "menu", "start", "/start")
+        or t in ("oi", "ola", "olá", "bom dia", "boa tarde", "boa noite")
         or t in ("config", "infra", "setup")
         or t.startswith("definir ")
         or t.startswith("configurar ")
@@ -258,6 +259,14 @@ def _truncate_text(text: str, limit: int = 2500) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3].rstrip() + "..."
+
+
+def _monday_candidate_item_names(platform: str) -> Tuple[str, ...]:
+    if platform == "google":
+        return ("Criação de Campanha Google ADS", "Criacao de Campanha Google ADS")
+    if platform == "meta":
+        return ("Criação de Campanha Meta ADS", "Criacao de Campanha Meta ADS")
+    return ()
 
 
 def _monday_token() -> str:
@@ -501,6 +510,16 @@ class AlphaOSChat:
         if not t or t in ("ajuda", "help", "menu", "start", "/start"):
             return _help_text()
 
+        if t in ("oi", "ola", "olá", "bom dia", "boa tarde", "boa noite"):
+            return (
+                "Oi. Estou online.\n\n"
+                "Posso responder sobre clientes da Monday.\n"
+                "Exemplos:\n"
+                "- mostrar google Sette Arquitetura\n"
+                "- o que foi criado para Clinica da Coluna?\n"
+                "- qual a copy da LP do cliente X?"
+            )
+
         if t in ("config", "infra", "setup"):
             return _infra_status_text()
 
@@ -685,7 +704,10 @@ class AlphaOSChat:
                 return "Nao encontrei esse cliente. Use 'clientes' para listar."
             return self._validate_client(client)
 
-        return _help_text()
+        try:
+            return self._answer_general_question(phone, raw)
+        except Exception as exc:
+            return f"Deu erro ao consultar a Monday: {exc}"
 
     def _resolve_client(self, phone: str, term: str) -> Optional[Dict]:
         term = (term or "").strip()
@@ -711,9 +733,123 @@ class AlphaOSChat:
                 return self.store.get_client(client_id)
             if client_name and _norm_cmp(client_name) in text:
                 return self.store.get_client(client_id)
+        monday_client = find_client_boards(raw)
+        if monday_client:
+            return self._virtual_client_from_monday(monday_client)
         return None
 
+    def _virtual_client_from_monday(self, monday_match: Dict) -> Dict:
+        client_name = str(monday_match.get("client_name") or "").strip()
+        existing = self.store.find_client(client_name) if client_name else None
+        if existing:
+            client = existing
+        else:
+            client = normalize_client(
+                {
+                    "id": f"monday-{re.sub(r'[^a-z0-9]+', '-', _norm_cmp(client_name)).strip('-') or 'cliente'}",
+                    "name": client_name or "Cliente Monday",
+                    "status": "monday_only",
+                }
+            )
+        artifacts = client.setdefault("artifacts", {})
+        monday = artifacts.setdefault("monday", {})
+        boards = monday_match.get("boards") or {}
+        for key, board in boards.items():
+            board_id = str((board or {}).get("id") or "").strip()
+            if key == "briefing":
+                monday["briefing_board_id"] = board_id
+            elif key == "lp":
+                monday["lp_board_id"] = board_id
+            elif key == "campanhas":
+                monday["campanhas_board_id"] = board_id
+            elif key == "otimizacoes":
+                monday["otimizacoes_board_id"] = board_id
+            elif key == "saldo":
+                monday["saldo_board_id"] = board_id
+        return client
+
+    def _ensure_monday_client(self, client: Dict) -> Dict:
+        artifacts = client.setdefault("artifacts", {})
+        monday = artifacts.setdefault("monday", {})
+        if any(monday.get(key) for key in ("briefing_board_id", "lp_board_id", "campanhas_board_id")):
+            return client
+        match = find_client_boards(client.get("name") or "")
+        if not match:
+            return client
+        return self._virtual_client_from_monday(match)
+
+    def _monday_context_for_client(self, client: Dict) -> str:
+        client = self._ensure_monday_client(client)
+        artifacts = client.setdefault("artifacts", {})
+        monday = artifacts.setdefault("monday", {})
+        sections = [f"Cliente: {client.get('name')}"]
+
+        board_labels = [
+            ("briefing_board_id", "Briefing"),
+            ("lp_board_id", "LP"),
+            ("campanhas_board_id", "Campanhas"),
+            ("otimizacoes_board_id", "Otimizacoes"),
+            ("saldo_board_id", "Saldo"),
+        ]
+
+        for board_key, label in board_labels:
+            board_id = str(monday.get(board_key) or "").strip()
+            if not board_id:
+                continue
+            items = board_items_with_latest_updates(board_id, limit=200)
+            if not items:
+                continue
+            sections.append("")
+            sections.append(f"[{label}]")
+            count = 0
+            for item in items:
+                update_text = _truncate_text(item.get("latest_update") or "", 1200)
+                if not update_text and count >= 8:
+                    continue
+                sections.append(f"- Item: {item.get('name')}")
+                if update_text:
+                    sections.append(f"  Update: {update_text}")
+                count += 1
+                if count >= 12:
+                    break
+
+        return "\n".join(sections)
+
+    def _answer_general_question(self, phone: str, question: str) -> str:
+        client = self._resolve_client_from_text(phone, question)
+        if not client:
+            return (
+                "Consigo responder sobre clientes da Monday, mas preciso do nome do cliente na pergunta.\n"
+                "Exemplo: mostrar google Sette Arquitetura\n"
+                "Ou: o que foi criado para Clinica da Coluna?"
+            )
+
+        context = self._monday_context_for_client(client)
+        if not context.strip():
+            return f"Achei {client.get('name')}, mas nao consegui montar contexto suficiente na Monday."
+
+        try:
+            answer = complete_text(
+                f"""
+Voce e o Alpha OS da agencia Alpha Marketing Digital.
+Responda em portugues do Brasil, de forma natural, objetiva e util.
+Use apenas o contexto abaixo da Monday para responder.
+Se a informacao nao estiver clara no contexto, diga isso claramente.
+Se a pergunta for sobre Google Ads ou Meta Ads, priorize esses trechos.
+
+Pergunta do usuario:
+{question}
+
+Contexto da Monday:
+{context}
+"""
+            )
+            return _truncate_text(answer, 3000)
+        except Exception:
+            return _truncate_text(context, 3000)
+
     def _show_platform_text(self, client: Dict, platform: str) -> str:
+        client = self._ensure_monday_client(client)
         artifacts = client.setdefault("artifacts", {})
         monday = artifacts.setdefault("monday", {})
 

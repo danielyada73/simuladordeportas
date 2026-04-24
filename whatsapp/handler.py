@@ -47,17 +47,26 @@ def send_text(to: str, text: str):
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json",
     }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": text},
-    }
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
+        chunks = []
+        body = str(text or "").strip() or "..."
+        while body:
+            chunks.append(body[:3500])
+            body = body[3500:]
+
+        last_response = None
+        for chunk in chunks:
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "text",
+                "text": {"body": chunk},
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            resp.raise_for_status()
+            last_response = resp.json()
         logger.info(f"WhatsApp msg enviada para {to}")
-        return resp.json()
+        return last_response
     except Exception as e:
         logger.error(f"Erro ao enviar WhatsApp msg: {e}")
         return None
@@ -160,19 +169,21 @@ def process_webhook(data: dict, sheets_manager):
         # Alpha OS takes over text messages when enabled, or when the user sends an Alpha OS command.
         if msg_type == "text":
             text = message.get("text", {}).get("body", "").strip()
-            try:
-                from alpha_os.chat import is_alpha_os_command  # type: ignore
+            from alpha_os.chat import is_alpha_os_command  # type: ignore
 
-                if ALPHA_OS_MODE or is_alpha_os_command(text):
-                    chat = _get_alpha_chat()
-                    if chat is None:
-                        send_text(phone, "Alpha OS indisponivel agora. Verifique GOOGLE_SHEETS_SPREADSHEET_ID e credenciais.")
-                        return
-                    reply = chat.handle(phone, text)
-                    send_text(phone, reply)
+            if ALPHA_OS_MODE or is_alpha_os_command(text):
+                chat = _get_alpha_chat()
+                if chat is None:
+                    send_text(phone, "Alpha OS indisponivel agora. Verifique GOOGLE_SHEETS_SPREADSHEET_ID e credenciais.")
                     return
-            except Exception as exc:
-                logger.error(f"Erro Alpha OS: {exc}")
+                try:
+                    reply = chat.handle(phone, text)
+                except Exception as exc:
+                    logger.error(f"Erro Alpha OS: {exc}")
+                    send_text(phone, f"Deu erro interno no Alpha OS: {exc}")
+                    return
+                send_text(phone, reply)
+                return
 
         # Buscar ou criar usuário pela phone
         user = sheets_manager.get_user(phone_number=phone)

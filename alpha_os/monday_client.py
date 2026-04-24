@@ -1,5 +1,7 @@
 import os
-from typing import Any, Dict, Optional
+import re
+import unicodedata
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -29,6 +31,123 @@ def graphql(query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str,
     if data.get("errors"):
         raise RuntimeError(str(data["errors"])[:300])
     return data.get("data") or {}
+
+
+def _strip_accents(text: str) -> str:
+    return "".join(char for char in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(char))
+
+
+def _norm(text: str) -> str:
+    value = _strip_accents(text or "").lower().strip()
+    value = re.sub(r"\s*-\s*", "-", value)
+    value = re.sub(r"\s+", " ", value)
+    return value
+
+
+def list_boards(limit: int = 500) -> List[Dict[str, str]]:
+    data = graphql(f"query {{ boards(limit: {int(limit)}) {{ id name }} }}")
+    boards = data.get("boards") or []
+    return [{"id": str(board.get("id") or ""), "name": str(board.get("name") or "")} for board in boards]
+
+
+def _extract_client_name(board_name: str) -> Optional[str]:
+    name = str(board_name or "").strip()
+    match = re.match(r"^(.*?)\s*-\s*[1-5]\.", name)
+    if match:
+        client_name = match.group(1).strip()
+        return client_name or None
+    return None
+
+
+def find_client_boards(search_text: str, limit: int = 500) -> Optional[Dict[str, Any]]:
+    boards = list_boards(limit=limit)
+    groups: Dict[str, Dict[str, Any]] = {}
+
+    for board in boards:
+        client_name = _extract_client_name(board.get("name", ""))
+        if not client_name:
+            continue
+        key = _norm(client_name)
+        entry = groups.setdefault(key, {"client_name": client_name, "boards": []})
+        entry["boards"].append(board)
+
+    query = _norm(search_text)
+    if not query:
+        return None
+
+    best = None
+    best_score = -1
+    query_tokens = set(query.split())
+
+    for key, entry in groups.items():
+        score = 0
+        if key in query:
+            score += 100
+        key_tokens = set(key.split())
+        score += len(query_tokens & key_tokens) * 10
+        if score > best_score:
+            best = entry
+            best_score = score
+
+    if best_score <= 0:
+        return None
+
+    typed_boards: Dict[str, Dict[str, str]] = {}
+    for board in best["boards"]:
+        normalized_name = _norm(board["name"])
+        if "1. briefing" in normalized_name:
+            typed_boards["briefing"] = board
+        elif "2. criacao de lp" in normalized_name or "2. criação de lp" in normalized_name:
+            typed_boards["lp"] = board
+        elif "3. campanhas" in normalized_name:
+            typed_boards["campanhas"] = board
+        elif "4. otimizacoes" in normalized_name or "4. otimizações" in normalized_name:
+            typed_boards["otimizacoes"] = board
+        elif "5. saldo" in normalized_name:
+            typed_boards["saldo"] = board
+
+    return {"client_name": best["client_name"], "boards": typed_boards}
+
+
+def board_items_with_latest_updates(board_id: str, limit: int = 200) -> List[Dict[str, str]]:
+    board_id = str(board_id or "").strip()
+    if not board_id:
+        return []
+    data = graphql(
+        f"""
+        query {{
+          boards(ids: [{board_id}]) {{
+            items_page(limit: {int(limit)}) {{
+              items {{
+                id
+                name
+                updates(limit: 1) {{
+                  text_body
+                  body
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+    )
+    boards = data.get("boards") or []
+    if not boards:
+        return []
+    items_page = boards[0].get("items_page") or {}
+    items = items_page.get("items") or []
+    rows: List[Dict[str, str]] = []
+    for item in items:
+        updates = item.get("updates") or []
+        latest = updates[0] if updates else {}
+        rows.append(
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or ""),
+                "latest_update": str(latest.get("text_body") or latest.get("body") or "").strip(),
+            }
+        )
+    return rows
 
 
 def latest_update_text(item_id: str) -> str:
