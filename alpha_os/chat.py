@@ -66,6 +66,7 @@ def is_alpha_os_command(text: str) -> bool:
         return False
     return (
         t in ("ajuda", "help", "menu", "start", "/start")
+        or t in ("config", "infra", "setup")
         or t.startswith("novo cliente")
         or t.startswith("novo_cliente")
         or t in ("clientes", "listar clientes")
@@ -84,6 +85,7 @@ def _help_text() -> str:
             "novo cliente Nome do Cliente",
             "Briefing completo na linha seguinte",
             "",
+            "config",
             "clientes",
             "status Nome ou ID",
             "rodar Nome ou ID monday",
@@ -176,6 +178,49 @@ def _norm_cmp(text: str) -> str:
 
 def _monday_token() -> str:
     return os.getenv("MONDAY_API_TOKEN", "").strip()
+
+
+def _env_value(name: str) -> str:
+    return os.getenv(name, "").strip()
+
+
+def _is_set(name: str) -> bool:
+    return bool(_env_value(name))
+
+
+def _infra_status_text() -> str:
+    checks = [
+        ("ALPHA_OS_MODE", _env_value("ALPHA_OS_MODE").lower() in ("1", "true", "yes", "on")),
+        ("WHATSAPP_TOKEN", _is_set("WHATSAPP_TOKEN")),
+        ("WHATSAPP_PHONE_NUMBER_ID", _is_set("WHATSAPP_PHONE_NUMBER_ID") or _is_set("PHONE_NUMBER_ID")),
+        ("WHATSAPP_VERIFY_TOKEN", _is_set("WHATSAPP_VERIFY_TOKEN")),
+        ("GOOGLE_SHEETS_SPREADSHEET_ID", _is_set("GOOGLE_SHEETS_SPREADSHEET_ID")),
+        ("GOOGLE_CREDENTIALS_JSON", _is_set("GOOGLE_CREDENTIALS_JSON") or _is_set("GOOGLE_SERVICE_ACCOUNT_JSON")),
+        ("MONDAY_API_TOKEN", _is_set("MONDAY_API_TOKEN")),
+        ("N8N_ONBOARDING_WEBHOOK_URL", _is_set("N8N_ONBOARDING_WEBHOOK_URL")),
+        ("N8N_PHASE2_WEBHOOK_URL", _is_set("N8N_PHASE2_WEBHOOK_URL")),
+        ("N8N_GOOGLE_PUBLISH_WEBHOOK_URL", _is_set("N8N_GOOGLE_PUBLISH_WEBHOOK_URL")),
+        ("N8N_META_PUBLISH_WEBHOOK_URL", _is_set("N8N_META_PUBLISH_WEBHOOK_URL")),
+        ("N8N_DAILY_ANALYSIS_WEBHOOK_URL", _is_set("N8N_DAILY_ANALYSIS_WEBHOOK_URL")),
+        ("N8N_WEEKLY_ANALYSIS_WEBHOOK_URL", _is_set("N8N_WEEKLY_ANALYSIS_WEBHOOK_URL")),
+    ]
+
+    lines = ["Alpha OS - Infra atual", ""]
+    for name, ok in checks:
+        lines.append(f"- {name}: {'OK' if ok else 'MISSING'}")
+
+    lines.extend(
+        [
+            "",
+            "Fora do Render, ainda precisa existir:",
+            "- n8n fluxo 01 ativo e com Form URL",
+            "- n8n fluxo 02 ativo em /webhook/status_monday",
+            "- n8n fluxo Google ativo",
+            "- n8n fluxo Meta ativo",
+            "- credenciais do Monday, Google Docs, Gemini, Google Ads e Meta dentro do n8n",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _monday_graphql(query: str, variables: Optional[Dict] = None) -> Dict:
@@ -282,6 +327,9 @@ class AlphaOSChat:
 
         if not t or t in ("ajuda", "help", "menu", "start", "/start"):
             return _help_text()
+
+        if t in ("config", "infra", "setup"):
+            return _infra_status_text()
 
         if t.startswith("novo cliente") or t.startswith("novo_cliente"):
             name, briefing = _parse_new_client(raw)
