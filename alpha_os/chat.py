@@ -735,7 +735,13 @@ class AlphaOSChat:
                 return self.store.get_client(client_id)
         monday_client = find_client_boards(raw)
         if monday_client:
-            return self._virtual_client_from_monday(monday_client)
+            client = self._virtual_client_from_monday(monday_client)
+            try:
+                self.store.upsert_client(client)
+                self.store.set_last_client_for_phone(phone, client.get("id"))
+            except Exception:
+                pass
+            return client
         return None
 
     def _virtual_client_from_monday(self, monday_match: Dict) -> Dict:
@@ -818,8 +824,12 @@ class AlphaOSChat:
     def _answer_general_question(self, phone: str, question: str) -> str:
         client = self._resolve_client_from_text(phone, question)
         if not client:
+            last_client_id = self.store.get_last_client_for_phone(phone)
+            if last_client_id:
+                client = self.store.get_client(last_client_id)
+        if not client:
             return (
-                "Consigo responder sobre clientes da Monday, mas preciso do nome do cliente na pergunta.\n"
+                "Consigo responder sobre clientes da Monday, mas preciso do nome do cliente na pergunta ou de um contexto anterior.\n"
                 "Exemplo: mostrar google Sette Arquitetura\n"
                 "Ou: o que foi criado para Clinica da Coluna?"
             )
