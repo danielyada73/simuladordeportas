@@ -13,9 +13,19 @@ Comandos atuais:
 - `status Nome ou ID`
 - `rodar Nome ou ID monday`
 - `rodar Nome ou ID fase2`
-- `rodar Nome ou ID google`
-- `rodar Nome ou ID meta`
 - `validar Nome ou ID`
+- `definir Nome ou ID common.landing_page_url https://site.com`
+- `definir Nome ou ID google.customer_id 1234567890`
+- `definir Nome ou ID google.manager_customer_id 0987654321`
+- `definir Nome ou ID meta.ad_account_id 377601641828660`
+- `definir Nome ou ID meta.page_id 123456789012345`
+- `preparar google Nome ou ID`
+- `preparar meta Nome ou ID`
+- `publicar google Nome ou ID`
+- `publicar meta Nome ou ID`
+- `analisar google Nome ou ID mensal`
+- `analisar meta Nome ou ID mensal`
+- `o que falta Nome ou ID`
 
 ## 2. Variaveis do Render
 
@@ -30,66 +40,75 @@ Estas variaveis precisam estar no servico do Render:
 - `MONDAY_API_TOKEN`
 - `N8N_ONBOARDING_WEBHOOK_URL`
 - `N8N_PHASE2_WEBHOOK_URL`
+
+Para publicacao e analise diretas:
+
+- `GEMINI_API_KEY` ou `OPENAI_API_KEY`
+- `GOOGLE_ADS_DEVELOPER_TOKEN`
+- `GOOGLE_ADS_LOGIN_CUSTOMER_ID`
+- `GOOGLE_ADS_CLIENT_ID`
+- `GOOGLE_ADS_CLIENT_SECRET`
+- `GOOGLE_ADS_REFRESH_TOKEN`
+- `META_ACCESS_TOKEN`
+
+Se ainda quiser manter os webhooks de publicacao no n8n:
+
 - `N8N_GOOGLE_PUBLISH_WEBHOOK_URL`
 - `N8N_META_PUBLISH_WEBHOOK_URL`
+- `N8N_DAILY_ANALYSIS_WEBHOOK_URL`
+- `N8N_WEEKLY_ANALYSIS_WEBHOOK_URL`
 
 Opcionais:
 
 - `MONDAY_API_URL`
 - `ALPHA_OS_ONBOARDING_PRAZO`
 - `ALPHA_OS_ONBOARDING_SEGMENTO`
-- `N8N_DAILY_ANALYSIS_WEBHOOK_URL`
-- `N8N_WEEKLY_ANALYSIS_WEBHOOK_URL`
+- `GOOGLE_ADS_CREDENTIALS_JSON`
+- `GOOGLE_ADS_CREDENTIALS_PATH`
+- `GOOGLE_ADS_API_VERSION`
+- `META_GRAPH_VERSION`
 
-## 3. O que o n8n faz
+## 3. O que o n8n faz hoje
 
-O n8n continua sendo o orquestrador das tarefas pesadas e dos conectores externos.
+O n8n continua sendo o orquestrador das tarefas pesadas e dos conectores externos nas fases 1 e 2.
 
 Mapeamento atual:
 
 - Fluxo 01 `01 - Monday Express - Alpha (1).json`
-  - Cria o cliente no Monday
-  - Gera o briefing no Google Docs
-  - Cria os boards e grupos
+  - cria o cliente no Monday
+  - gera o briefing no Google Docs
+  - cria os boards e grupos
 - Fluxo 02 `02 - AIs Agentes da Alpha.json`
-  - Gera copy de LP
-  - Gera copy de criativos
-  - Gera estrutura Google Ads
-  - Gera estrutura Meta Ads
-- Fluxo 04 `04 - IA Google Ads.json`
-  - Publica Google Ads a partir do item aprovado no Monday
-- Fluxo 03 `03 - Execução Meta Ads - Alpha (1).json`
-  - Publica Meta Ads a partir do item aprovado no Monday
+  - gera copy de LP
+  - gera copy de criativos
+  - gera estrutura Google Ads
+  - gera estrutura Meta Ads
 
-## 4. O que precisa estar configurado no n8n
+## 4. O que o Alpha OS ja pode fazer de forma direta
 
-Credenciais minimas:
+Sem depender dos fluxos 03 e 04, o servico do WhatsApp ja pode:
 
-- Monday API
-- Google Docs OAuth
-- Google Gemini
-- Google Ads OAuth e developer token
-- Meta access token do usuario do sistema
-
-Webhooks ou endpoints ativos:
-
-- Form URL do fluxo 01
-- `/webhook/status_monday`
-- `/webhook/aprovacao_campads`
-- `/webhook/publicar_meta`
+- localizar os itens certos no Monday
+- ler o update mais recente de Google Ads
+- ler o update mais recente de Meta Ads
+- transformar esse texto em JSON tecnico
+- publicar Google Ads em modo pausado
+- publicar Meta Ads em modo pausado
+- analisar Google Ads por periodo
+- analisar Meta Ads por periodo
 
 ## 5. O que ainda depende de configuracao por cliente
 
 Mesmo com o WhatsApp no centro, estes dados precisam existir em algum lugar:
 
-- Conta ou MCC correta do Google Ads
-- Conta de anuncio correta da Meta
+- conta ou MCC correta do Google Ads
+- conta de anuncio correta da Meta
 - `page_id` da pagina do Facebook
 - URL final da landing page
-- Pixel, eventos e conversoes quando aplicavel
-- Metodo de pagamento da conta
+- pixel, eventos e conversoes quando aplicavel
+- metodo de pagamento da conta
 
-Sem isso, o Alpha OS consegue disparar os fluxos, mas a publicacao pode sair na conta errada ou com placeholders.
+Sem isso, o Alpha OS consegue montar e tentar publicar, mas a publicacao pode sair na conta errada ou com placeholders.
 
 ## 6. Fluxo operacional ideal
 
@@ -103,25 +122,33 @@ Sem isso, o Alpha OS consegue disparar os fluxos, mas a publicacao pode sair na 
 5. Operador roda:
    `rodar <id> fase2`
 6. Depois de revisar no Monday:
-   `rodar <id> google`
-7. Depois:
-   `rodar <id> meta`
+   `preparar google <id>`
+7. Se estiver tudo certo:
+   `publicar google <id>`
+8. Depois:
+   `preparar meta <id>`
+9. E por fim:
+   `publicar meta <id>`
+10. Quando quiser leitura real de performance:
+   `analisar google <id> semanal`
+11. Ou:
+   `analisar meta <id> mensal`
 
 ## 7. O que ainda nao esta 100 por cento automatico
 
-- Criacao de BM na Meta
-- Escolha dinamica da conta certa da Meta por cliente
-- Escolha dinamica da conta certa do Google Ads por cliente
-- Instalacao de tags e pixels na LP
-- Analises diaria e semanal sem webhook dedicado no n8n
-- Publicacao multi-plataforma com validacao de acessos antes de subir
+- criacao de BM na Meta
+- escolha dinamica da conta certa da Meta por cliente
+- escolha dinamica da conta certa do Google Ads por cliente
+- instalacao de tags e pixels na LP
+- publicacao multi-plataforma com validacao de acessos antes de subir
+- leitura automatica de briefing via Google Docs quando o Monday nao tiver informacao suficiente
 
 ## 8. Meta final recomendada
 
-Deixar o WhatsApp como cockpit e o n8n como executor.
+Deixar o WhatsApp como cockpit, o n8n como executor das fases 1 e 2, e o Alpha OS como cerebro de operacao para:
 
-O proximo passo tecnico mais importante e padronizar os payloads de publicacao de Google e Meta para que:
-
-- o Monday entregue sempre o mesmo formato
-- o Alpha OS saiba qual conta usar
-- o n8n publique sem campos hardcoded
+- configuracao por cliente
+- publicacao Google Ads
+- publicacao Meta Ads
+- analise por periodo
+- status operacional da conta

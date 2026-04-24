@@ -24,6 +24,75 @@ CLIENTS_HEADERS = ["client_id", "client_name", "created_at", "updated_at", "data
 SESSIONS_HEADERS = ["phone", "last_client_id", "updated_at"]
 
 
+def _default_platform_config() -> Dict[str, Any]:
+    return {
+        "common": {
+            "landing_page_url": "",
+            "thank_you_url": "",
+            "country": "Brazil",
+            "language": "Portuguese",
+            "timezone": "America/Sao_Paulo",
+            "currency_code": "BRL",
+        },
+        "google": {
+            "customer_id": "",
+            "manager_customer_id": "",
+            "conversion_action_name": "",
+            "conversion_category": "SUBMIT_LEAD_FORM",
+        },
+        "meta": {
+            "ad_account_id": "",
+            "page_id": "",
+            "pixel_id": "",
+            "instagram_actor_id": "",
+            "objective": "OUTCOME_TRAFFIC",
+            "cta_type": "LEARN_MORE",
+        },
+    }
+
+
+def _default_artifacts() -> Dict[str, Any]:
+    return {
+        "googleAdsJson": "",
+        "metaAdsJson": "",
+        "metricsJson": "",
+        "googleSourceText": "",
+        "metaSourceText": "",
+        "analysis": {
+            "google": {},
+            "meta": {},
+        },
+    }
+
+
+def _default_stages() -> Dict[str, Any]:
+    return {
+        "onboarding": {"status": "waiting", "message": ""},
+        "phase2": {"status": "waiting", "message": ""},
+        "googlePublish": {"status": "waiting", "message": ""},
+        "metaPublish": {"status": "waiting", "message": ""},
+        "dailyAnalysis": {"status": "waiting", "message": ""},
+        "weeklyAnalysis": {"status": "waiting", "message": ""},
+    }
+
+
+def _merge_defaults(target: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
+    for key, value in defaults.items():
+        if key not in target:
+            target[key] = value
+            continue
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_defaults(target[key], value)
+    return target
+
+
+def normalize_client(client: Dict[str, Any]) -> Dict[str, Any]:
+    client = dict(client or {})
+    client.setdefault("status", "briefing_received")
+    _merge_defaults(client, {"stages": _default_stages(), "artifacts": _default_artifacts(), "config": _default_platform_config(), "logs": []})
+    return client
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -116,7 +185,7 @@ class AlphaOSStore:
         _, row = found
         try:
             data = json.loads(row.get("data_json") or "{}")
-            return data
+            return normalize_client(data)
         except Exception:
             return None
 
@@ -133,6 +202,7 @@ class AlphaOSStore:
         return None
 
     def upsert_client(self, client: Dict[str, Any]):
+        client = normalize_client(client)
         client_id = str(client.get("id") or client.get("client_id") or "").strip()
         if not client_id:
             raise ValueError("client id missing")
@@ -171,17 +241,40 @@ class AlphaOSStore:
             "status": "briefing_received",
             "createdAt": now,
             "updatedAt": now,
-            "stages": {
-                "onboarding": {"status": "waiting", "message": ""},
-                "phase2": {"status": "waiting", "message": ""},
-                "googlePublish": {"status": "waiting", "message": ""},
-                "metaPublish": {"status": "waiting", "message": ""},
-                "dailyAnalysis": {"status": "waiting", "message": ""},
-                "weeklyAnalysis": {"status": "waiting", "message": ""},
-            },
-            "artifacts": {"googleAdsJson": "", "metaAdsJson": "", "metricsJson": ""},
+            "stages": _default_stages(),
+            "artifacts": _default_artifacts(),
+            "config": _default_platform_config(),
             "logs": [{"at": now, "type": "client_created", "message": "Briefing recebido via WhatsApp."}],
         }
+        self.upsert_client(client)
+        return client
+
+    def update_client_config(self, client_id: str, path: str, value: Any) -> Dict[str, Any]:
+        client = self.get_client(client_id)
+        if not client:
+            raise ValueError("Cliente nao encontrado.")
+
+        parts = [part for part in str(path or "").split(".") if part]
+        if not parts:
+            raise ValueError("Caminho de configuracao invalido.")
+
+        cursor = client.setdefault("config", {})
+        for part in parts[:-1]:
+            next_value = cursor.get(part)
+            if not isinstance(next_value, dict):
+                next_value = {}
+                cursor[part] = next_value
+            cursor = next_value
+
+        cursor[parts[-1]] = value
+        client.setdefault("logs", []).insert(
+            0,
+            {
+                "at": _utc_now_iso(),
+                "type": "config_updated",
+                "message": f"Configuracao atualizada: {path}",
+            },
+        )
         self.upsert_client(client)
         return client
 
@@ -207,4 +300,3 @@ class AlphaOSStore:
             if str(row.get("phone")) == phone:
                 return str(row.get("last_client_id") or "").strip() or None
         return None
-
