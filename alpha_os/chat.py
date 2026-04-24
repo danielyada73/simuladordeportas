@@ -245,6 +245,30 @@ def _discover_briefing_item_id(briefing_board_id: str) -> Optional[str]:
     return str(items[0].get("id") or "").strip() or None
 
 
+def _discover_item_id_by_name(board_id: str, item_name: str) -> Optional[str]:
+    if not board_id or not item_name:
+        return None
+    # Use monday server-side filtering first (fast).
+    q = (
+        "query { "
+        f"boards (ids: [{board_id}]) {{ "
+        f'items_page (query_params: {{rules: [{{column_id: "name", compare_value: ["{item_name}"], operator: any_of}}]}}) {{ '
+        "items { id name } "
+        "} "
+        "} "
+        "}"
+    )
+    data = _monday_graphql(q)
+    boards = data.get("boards") or []
+    if not boards:
+        return None
+    items_page = boards[0].get("items_page") or {}
+    items = items_page.get("items") or []
+    if not items:
+        return None
+    return str(items[0].get("id") or "").strip() or None
+
+
 class AlphaOSChat:
     def __init__(self):
         spreadsheet_id = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "")
@@ -384,6 +408,74 @@ class AlphaOSChat:
             event_payload = {"event": {"type": "update_column_value", "pulseId": int(briefing_item_id)}}
             ok, message = _call_webhook(url, event_payload)
 
+        elif stage_key == "googlePublish":
+            artifacts = client.setdefault("artifacts", {})
+            monday = artifacts.setdefault("monday", {})
+
+            if not _monday_token():
+                stage["status"] = "needs_config"
+                stage["message"] = "Falta configurar MONDAY_API_TOKEN (para achar o pulseId no Monday)."
+                self.store.upsert_client(client)
+                return _format_status(client)
+
+            try:
+                if not monday.get("campanhas_board_id"):
+                    monday.update(_discover_monday_artifacts(client.get("name") or ""))
+                if not monday.get("google_item_id") and monday.get("campanhas_board_id"):
+                    monday["google_item_id"] = (
+                        _discover_item_id_by_name(monday.get("campanhas_board_id"), "Criação de Campanha Google ADS")
+                        or ""
+                    )
+            except Exception as exc:
+                stage["status"] = "error"
+                stage["message"] = f"Erro ao validar Monday: {exc}"
+                self.store.upsert_client(client)
+                return _format_status(client)
+
+            item_id = str(monday.get("google_item_id") or "").strip()
+            if not item_id:
+                stage["status"] = "blocked"
+                stage["message"] = "Nao achei a tarefa 'Criação de Campanha Google ADS' no quadro de CAMPANHAS."
+                self.store.upsert_client(client)
+                return _format_status(client)
+
+            event_payload = {"event": {"type": "update_column_value", "pulseId": int(item_id)}}
+            ok, message = _call_webhook(url, event_payload)
+
+        elif stage_key == "metaPublish":
+            artifacts = client.setdefault("artifacts", {})
+            monday = artifacts.setdefault("monday", {})
+
+            if not _monday_token():
+                stage["status"] = "needs_config"
+                stage["message"] = "Falta configurar MONDAY_API_TOKEN (para achar o pulseId no Monday)."
+                self.store.upsert_client(client)
+                return _format_status(client)
+
+            try:
+                if not monday.get("campanhas_board_id"):
+                    monday.update(_discover_monday_artifacts(client.get("name") or ""))
+                if not monday.get("meta_item_id") and monday.get("campanhas_board_id"):
+                    monday["meta_item_id"] = (
+                        _discover_item_id_by_name(monday.get("campanhas_board_id"), "Criação de Campanha Meta ADS")
+                        or ""
+                    )
+            except Exception as exc:
+                stage["status"] = "error"
+                stage["message"] = f"Erro ao validar Monday: {exc}"
+                self.store.upsert_client(client)
+                return _format_status(client)
+
+            item_id = str(monday.get("meta_item_id") or "").strip()
+            if not item_id:
+                stage["status"] = "blocked"
+                stage["message"] = "Nao achei a tarefa 'Criação de Campanha Meta ADS' no quadro de CAMPANHAS."
+                self.store.upsert_client(client)
+                return _format_status(client)
+
+            event_payload = {"event": {"type": "update_column_value", "pulseId": int(item_id)}}
+            ok, message = _call_webhook(url, event_payload)
+
         else:
             payload = {
                 "client_id": client.get("id"),
@@ -426,5 +518,7 @@ class AlphaOSChat:
             f"- briefing_item_id (pulseId): {monday.get('briefing_item_id') or 'NA'}",
             f"- lp_board_id: {monday.get('lp_board_id') or 'NA'}",
             f"- campanhas_board_id: {monday.get('campanhas_board_id') or 'NA'}",
+            f"- google_item_id (pulseId): {monday.get('google_item_id') or 'NA'}",
+            f"- meta_item_id (pulseId): {monday.get('meta_item_id') or 'NA'}",
         ]
         return "\n".join(lines)
