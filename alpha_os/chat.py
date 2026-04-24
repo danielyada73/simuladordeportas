@@ -15,6 +15,7 @@ from .campaign_ops import (
     publish_meta,
     readiness_text,
 )
+from .monday_client import latest_update_text
 from .store import AlphaOSStore
 
 
@@ -79,6 +80,9 @@ def is_alpha_os_command(text: str) -> bool:
         or t.startswith("definir ")
         or t.startswith("configurar ")
         or t.startswith("preparar ")
+        or t.startswith("mostrar ")
+        or t.startswith("ver ")
+        or t.startswith("puxar ")
         or t.startswith("publicar ")
         or t.startswith("publica ")
         or t.startswith("publique ")
@@ -109,6 +113,8 @@ def _help_text() -> str:
             "clientes",
             "status Nome ou ID",
             "definir Nome ou ID campo valor",
+            "mostrar google Nome ou ID",
+            "mostrar meta Nome ou ID",
             "preparar google Nome ou ID",
             "preparar meta Nome ou ID",
             "publicar google Nome ou ID",
@@ -245,6 +251,13 @@ def _config_token_index(parts):
         if "." in token:
             return index
     return -1
+
+
+def _truncate_text(text: str, limit: int = 2500) -> str:
+    value = (text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3].rstrip() + "..."
 
 
 def _monday_token() -> str:
@@ -546,6 +559,26 @@ class AlphaOSChat:
             updated = self.store.update_client_config(client["id"], field_path, value)
             return f"Configuracao salva para {updated['name']}.\n{field_path} = {value}"
 
+        if t.startswith("mostrar ") or t.startswith("ver ") or t.startswith("puxar "):
+            platform = ""
+            if "google" in t:
+                platform = "google"
+            elif "meta" in t:
+                platform = "meta"
+            if not platform:
+                return "Uso: mostrar <google|meta> <cliente>"
+            client = self._resolve_client_from_text(phone, raw)
+            if not client:
+                words = raw.split()
+                term = " ".join(words[2:]).strip() if len(words) > 2 else ""
+                client = self._resolve_client(phone, term)
+            if not client:
+                return "Nao encontrei esse cliente. Use 'clientes' para listar."
+            try:
+                return self._show_platform_text(client, platform)
+            except Exception as exc:
+                return f"Erro ao puxar texto do Monday: {exc}"
+
         if t.startswith("preparar "):
             parts = raw.split()
             if len(parts) < 3:
@@ -665,6 +698,64 @@ class AlphaOSChat:
         if client:
             self.store.set_last_client_for_phone(phone, client.get("id"))
         return client
+
+    def _resolve_client_from_text(self, phone: str, raw: str) -> Optional[Dict]:
+        text = _norm_cmp(raw)
+        client = self._resolve_client(phone, raw)
+        if client:
+            return client
+        for item in self.store.list_clients():
+            client_id = str(item.get("client_id") or "").strip()
+            client_name = str(item.get("client_name") or "").strip()
+            if client_id and client_id.lower() in text:
+                return self.store.get_client(client_id)
+            if client_name and _norm_cmp(client_name) in text:
+                return self.store.get_client(client_id)
+        return None
+
+    def _show_platform_text(self, client: Dict, platform: str) -> str:
+        artifacts = client.setdefault("artifacts", {})
+        monday = artifacts.setdefault("monday", {})
+
+        if not _monday_token():
+            return "Falta configurar MONDAY_API_TOKEN no Render para eu conseguir ler o texto do Monday."
+
+        if not monday.get("campanhas_board_id"):
+            monday.update(_discover_monday_artifacts(client.get("name") or ""))
+
+        if platform == "google":
+            if not monday.get("google_item_id") and monday.get("campanhas_board_id"):
+                monday["google_item_id"] = (
+                    _discover_item_id_by_name(monday.get("campanhas_board_id"), "Criação de Campanha Google ADS")
+                    or _discover_item_id_by_name(monday.get("campanhas_board_id"), "Criacao de Campanha Google ADS")
+                    or ""
+                )
+            item_id = str(monday.get("google_item_id") or "").strip()
+            if not item_id:
+                self.store.upsert_client(client)
+                return "Nao achei a tarefa de Google Ads desse cliente no Monday."
+            text = latest_update_text(item_id)
+            artifacts["googleSourceText"] = text
+            self.store.upsert_client(client)
+            return f"Monday - Google Ads - {client.get('name')}\n\n{_truncate_text(text)}"
+
+        if platform == "meta":
+            if not monday.get("meta_item_id") and monday.get("campanhas_board_id"):
+                monday["meta_item_id"] = (
+                    _discover_item_id_by_name(monday.get("campanhas_board_id"), "Criação de Campanha Meta ADS")
+                    or _discover_item_id_by_name(monday.get("campanhas_board_id"), "Criacao de Campanha Meta ADS")
+                    or ""
+                )
+            item_id = str(monday.get("meta_item_id") or "").strip()
+            if not item_id:
+                self.store.upsert_client(client)
+                return "Nao achei a tarefa de Meta Ads desse cliente no Monday."
+            text = latest_update_text(item_id)
+            artifacts["metaSourceText"] = text
+            self.store.upsert_client(client)
+            return f"Monday - Meta Ads - {client.get('name')}\n\n{_truncate_text(text)}"
+
+        return "Plataforma invalida."
 
     def _run_stage(self, phone: str, client: Dict, stage_key: str) -> str:
         meta = STAGES.get(stage_key)
