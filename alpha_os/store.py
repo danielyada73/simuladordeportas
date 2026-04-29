@@ -3,6 +3,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,9 +20,23 @@ SCOPES = [
 
 CLIENTS_SHEET_NAME = os.getenv("ALPHA_OS_CLIENTS_SHEET", "AlphaOS_Clients")
 SESSIONS_SHEET_NAME = os.getenv("ALPHA_OS_SESSIONS_SHEET", "AlphaOS_Sessions")
+BLOBS_SHEET_NAME = os.getenv("ALPHA_OS_BLOBS_SHEET", "AlphaOS_Blobs")
 
 CLIENTS_HEADERS = ["client_id", "client_name", "created_at", "updated_at", "data_json"]
 SESSIONS_HEADERS = ["phone", "last_client_id", "updated_at"]
+BLOBS_HEADERS = ["client_id", "field_key", "version", "part_index", "content"]
+
+DETACHED_TEXT_PATHS = (
+    "briefing",
+    "artifacts.googleSourceText",
+    "artifacts.metaSourceText",
+    "artifacts.googleAdsJson",
+    "artifacts.metaAdsJson",
+    "artifacts.metricsJson",
+)
+
+INLINE_JSON_SOFT_LIMIT = 45000
+BLOB_CHUNK_SIZE = 45000
 
 
 def _default_platform_config() -> Dict[str, Any]:
@@ -89,7 +104,16 @@ def _merge_defaults(target: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[st
 def normalize_client(client: Dict[str, Any]) -> Dict[str, Any]:
     client = dict(client or {})
     client.setdefault("status", "briefing_received")
-    _merge_defaults(client, {"stages": _default_stages(), "artifacts": _default_artifacts(), "config": _default_platform_config(), "logs": []})
+    _merge_defaults(
+        client,
+        {
+            "stages": _default_stages(),
+            "artifacts": _default_artifacts(),
+            "config": _default_platform_config(),
+            "logs": [],
+            "storage": {"blob_fields": {}},
+        },
+    )
     return client
 
 
@@ -102,6 +126,49 @@ def _slugify(value: str) -> str:
     value = value.encode("ascii", errors="ignore").decode("ascii")
     value = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
     return value[:60] or "cliente"
+
+
+def _get_nested(data: Dict[str, Any], path: str) -> Any:
+    cursor: Any = data
+    for part in [p for p in str(path or "").split(".") if p]:
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(part)
+    return cursor
+
+
+def _set_nested(data: Dict[str, Any], path: str, value: Any):
+    parts = [p for p in str(path or "").split(".") if p]
+    if not parts:
+        return
+    cursor = data
+    for part in parts[:-1]:
+        next_value = cursor.get(part)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            cursor[part] = next_value
+        cursor = next_value
+    cursor[parts[-1]] = value
+
+
+def _delete_nested(data: Dict[str, Any], path: str):
+    parts = [p for p in str(path or "").split(".") if p]
+    if not parts:
+        return
+    cursor: Any = data
+    for part in parts[:-1]:
+        if not isinstance(cursor, dict):
+            return
+        cursor = cursor.get(part)
+    if isinstance(cursor, dict):
+        cursor.pop(parts[-1], None)
+
+
+def _chunk_text(text: str, chunk_size: int = BLOB_CHUNK_SIZE) -> List[str]:
+    value = str(text or "")
+    if not value:
+        return []
+    return [value[i : i + chunk_size] for i in range(0, len(value), chunk_size)]
 
 
 def _load_google_credentials() -> Credentials:
@@ -147,12 +214,77 @@ class AlphaOSStore:
         sheet = client.open_by_key(self.spreadsheet_id)
         self._clients_ws = _open_or_create_worksheet(sheet, CLIENTS_SHEET_NAME, CLIENTS_HEADERS)
         self._sessions_ws = _open_or_create_worksheet(sheet, SESSIONS_SHEET_NAME, SESSIONS_HEADERS)
+        self._blobs_ws = _open_or_create_worksheet(sheet, BLOBS_SHEET_NAME, BLOBS_HEADERS)
 
     def _clients_records(self) -> List[Dict[str, Any]]:
         return self._clients_ws.get_all_records()
 
     def _sessions_records(self) -> List[Dict[str, Any]]:
         return self._sessions_ws.get_all_records()
+
+    def _blob_records(self) -> List[Dict[str, Any]]:
+        return self._blobs_ws.get_all_records()
+
+    def _store_blob_field(self, client_id: str, field_key: str, value: str) -> Dict[str, Any]:
+        text = str(value or "")
+        version = _utc_now_iso()
+        rows = [
+            [client_id, field_key, version, index, chunk]
+            for index, chunk in enumerate(_chunk_text(text), start=1)
+        ]
+        if rows:
+            self._blobs_ws.append_rows(rows, value_input_option="RAW")
+        return {
+            "sheet": BLOBS_SHEET_NAME,
+            "version": version,
+            "parts": len(rows),
+            "chars": len(text),
+        }
+
+    def _load_blob_field(self, client_id: str, field_key: str, metadata: Dict[str, Any], client_blob_rows: Optional[List[Dict[str, Any]]] = None) -> str:
+        version = str((metadata or {}).get("version") or "").strip()
+        if not client_id or not field_key or not version:
+            return ""
+
+        rows = client_blob_rows if client_blob_rows is not None else self._blob_records()
+        parts = []
+        for row in rows:
+            if str(row.get("client_id") or "").strip() != client_id:
+                continue
+            if str(row.get("field_key") or "").strip() != field_key:
+                continue
+            if str(row.get("version") or "").strip() != version:
+                continue
+            try:
+                part_index = int(row.get("part_index") or 0)
+            except Exception:
+                part_index = 0
+            parts.append((part_index, str(row.get("content") or "")))
+        parts.sort(key=lambda item: item[0])
+        return "".join(content for _, content in parts)
+
+    def _hydrate_blob_fields(self, client: Dict[str, Any]) -> Dict[str, Any]:
+        client = normalize_client(client)
+        client_id = str(client.get("id") or client.get("client_id") or "").strip()
+        blob_fields = (((client.get("storage") or {}).get("blob_fields")) or {})
+        if not client_id or not isinstance(blob_fields, dict) or not blob_fields:
+            return client
+
+        client_rows = [row for row in self._blob_records() if str(row.get("client_id") or "").strip() == client_id]
+        for field_key, metadata in blob_fields.items():
+            if not isinstance(metadata, dict):
+                continue
+            content = self._load_blob_field(client_id, field_key, metadata, client_rows)
+            if content:
+                _set_nested(client, field_key, content)
+        return client
+
+    def _existing_blob_meta(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            data = json.loads(row.get("data_json") or "{}")
+        except Exception:
+            return {}
+        return (((data.get("storage") or {}).get("blob_fields")) or {}) if isinstance(data, dict) else {}
 
     def list_clients(self) -> List[Dict[str, Any]]:
         items = []
@@ -185,7 +317,7 @@ class AlphaOSStore:
         _, row = found
         try:
             data = json.loads(row.get("data_json") or "{}")
-            return normalize_client(data)
+            return self._hydrate_blob_fields(data)
         except Exception:
             return None
 
@@ -211,10 +343,47 @@ class AlphaOSStore:
         client["updatedAt"] = now
 
         found = self._find_client_row(client_id)
+        existing_full = self.get_client(client_id) if found else None
+        existing_blob_meta = self._existing_blob_meta(found[1]) if found else {}
+
+        client_to_store = deepcopy(client)
+        storage = client_to_store.setdefault("storage", {})
+        blob_fields_meta = storage.setdefault("blob_fields", {})
+
+        for field_key in DETACHED_TEXT_PATHS:
+            new_value = _get_nested(client, field_key)
+            if not isinstance(new_value, str) or not new_value.strip():
+                _delete_nested(client_to_store, field_key)
+                blob_fields_meta.pop(field_key, None)
+                continue
+
+            old_value = _get_nested(existing_full or {}, field_key)
+            if old_value == new_value and field_key in existing_blob_meta:
+                metadata = existing_blob_meta[field_key]
+            else:
+                metadata = self._store_blob_field(client_id, field_key, new_value)
+
+            _set_nested(client_to_store, field_key, "")
+            blob_fields_meta[field_key] = metadata
+
+        if not blob_fields_meta:
+            storage.pop("blob_fields", None)
+        if not storage:
+            client_to_store.pop("storage", None)
+
+        payload = json.dumps(client_to_store, ensure_ascii=False)
+        if len(payload) > INLINE_JSON_SOFT_LIMIT:
+            compact_client = deepcopy(client_to_store)
+            logs = compact_client.get("logs")
+            if isinstance(logs, list) and len(logs) > 25:
+                compact_client["logs"] = logs[:25]
+            payload = json.dumps(compact_client, ensure_ascii=False)
+            client_to_store = compact_client
+
         if not found:
             created_at = client.get("createdAt") or now
             self._clients_ws.append_row(
-                [client_id, client.get("name") or client.get("client_name") or "", created_at, now, json.dumps(client)]
+                [client_id, client.get("name") or client.get("client_name") or "", created_at, now, payload]
             )
             return
 
@@ -222,7 +391,7 @@ class AlphaOSStore:
         # Update 4 columns (name, updated_at, data_json)
         self._clients_ws.update_cell(row_index, 2, client.get("name") or client.get("client_name") or "")
         self._clients_ws.update_cell(row_index, 4, now)
-        self._clients_ws.update_cell(row_index, 5, json.dumps(client))
+        self._clients_ws.update_cell(row_index, 5, payload)
 
     def create_client(self, name: str, briefing: str) -> Dict[str, Any]:
         name = str(name or "").strip()
