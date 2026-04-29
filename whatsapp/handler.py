@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 import time
+from typing import Optional, Tuple
 
 import requests
 
@@ -152,22 +153,34 @@ def send_image(to: str, image_bytes: bytes, caption: str = ""):
         return None
 
 
-def download_media(media_id: str) -> str:
+def _download_media_bytes(media_id: str) -> Tuple[Optional[dict], Optional[bytes]]:
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     try:
         info_url = f"https://graph.facebook.com/v25.0/{media_id}"
         info_resp = requests.get(info_url, headers=headers, timeout=15)
         info_resp.raise_for_status()
-        media_url = info_resp.json().get("url")
+        info = info_resp.json()
+        media_url = info.get("url")
         if not media_url:
-            return None
+            return info, None
 
         file_resp = requests.get(media_url, headers=headers, timeout=30)
         file_resp.raise_for_status()
+        return info, file_resp.content
+    except Exception as exc:
+        logger.error("Erro ao baixar midia WhatsApp: %s", exc)
+        return None, None
+
+
+def download_media(media_id: str) -> str:
+    try:
+        _, file_bytes = _download_media_bytes(media_id)
+        if not file_bytes:
+            return None
 
         path = os.path.join(TEMP_DIR, f"wa_{media_id}.jpg")
         with open(path, "wb") as file_handle:
-            file_handle.write(file_resp.content)
+            file_handle.write(file_bytes)
 
         logger.info("Midia baixada: %s", path)
         return path
@@ -176,24 +189,105 @@ def download_media(media_id: str) -> str:
         return None
 
 
-def _handle_alpha_os_message(phone: str, msg_type: str, message: dict):
-    if msg_type != "text":
-        send_text(
-            phone,
-            "Estou operando como Alpha OS e, por enquanto, trabalho so com texto.\n"
-            "Me mande sua pergunta sobre a Monday ou use:\n"
-            "novo cliente Nome do Cliente",
-        )
-        return
+def _is_supported_text_document(filename: str, mime_type: str) -> bool:
+    name = (filename or "").strip().lower()
+    mime = (mime_type or "").strip().lower()
+    return name.endswith(".txt") or mime == "text/plain"
 
+
+def _decode_text_document(file_bytes: bytes) -> Optional[str]:
+    if not file_bytes:
+        return None
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            text = file_bytes.decode(encoding)
+            text = text.replace("\x00", "").strip()
+            if text:
+                return text
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def download_text_document(media_id: str) -> Optional[str]:
+    _, file_bytes = _download_media_bytes(media_id)
+    if not file_bytes:
+        return None
+    return _decode_text_document(file_bytes)
+
+
+def _handle_alpha_os_message(phone: str, msg_type: str, message: dict):
     chat = _get_alpha_chat()
     if chat is None:
         send_text(phone, "Alpha OS indisponivel agora. Verifique MONDAY_API_TOKEN e GOOGLE_SHEETS_SPREADSHEET_ID.")
         return
 
-    text = message.get("text", {}).get("body", "").strip()
-    reply = chat.handle(phone, text)
-    send_text(phone, reply)
+    if msg_type == "text":
+        text = message.get("text", {}).get("body", "").strip()
+        reply = chat.handle(phone, text)
+        send_text(phone, reply)
+        return
+
+    if msg_type == "document":
+        document = message.get("document", {}) or {}
+        filename = (document.get("filename") or "briefing.txt").strip()
+        mime_type = (document.get("mime_type") or "").strip().lower()
+        media_id = document.get("id")
+        caption = (document.get("caption") or "").strip()
+
+        if not media_id:
+            send_text(phone, "Nao consegui baixar esse arquivo. Envie novamente o .txt.")
+            return
+
+        pending_name = chat.pending_briefing_name(phone)
+        if not pending_name and caption:
+            chat.handle(phone, caption)
+            pending_name = chat.pending_briefing_name(phone)
+
+        if not pending_name:
+            send_text(
+                phone,
+                "Recebi o arquivo, mas eu nao estava aguardando um briefing.\n\n"
+                "Primeiro envie assim:\n"
+                "novo cliente Nome do Cliente",
+            )
+            return
+
+        if not _is_supported_text_document(filename, mime_type):
+            send_text(
+                phone,
+                f"Recebi o arquivo {filename}, mas nessa etapa eu so leio .txt.\n"
+                "Envie um arquivo .txt simples ou cole o briefing em texto.",
+            )
+            return
+
+        briefing_text = download_text_document(media_id)
+        if not briefing_text:
+            send_text(
+                phone,
+                f"Nao consegui ler o arquivo {filename}.\n"
+                "Envie um .txt simples em UTF-8 ou cole o briefing em texto.",
+            )
+            return
+
+        reply = chat.handle_pending_briefing_text(phone, briefing_text, f"arquivo {filename}")
+        send_text(phone, reply)
+        return
+
+    if chat.pending_briefing_name(phone):
+        send_text(
+            phone,
+            "Estou aguardando o briefing desse cliente.\n"
+            "Nessa etapa, me mande o conteudo em texto ou anexe um arquivo .txt.",
+        )
+        return
+
+    send_text(
+        phone,
+        "Estou operando como Alpha OS e, por enquanto, trabalho com texto e arquivo .txt.\n"
+        "Me mande sua pergunta sobre a Monday ou use:\n"
+        "novo cliente Nome do Cliente",
+    )
 
 
 def process_webhook(data: dict, sheets_manager):

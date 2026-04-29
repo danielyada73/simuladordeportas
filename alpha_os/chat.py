@@ -136,7 +136,7 @@ def _help_text() -> str:
             "",
             "Voce pode falar comigo assim:",
             "novo cliente Nome do Cliente",
-            "Briefing completo na linha seguinte",
+            "Briefing completo na linha seguinte ou em arquivo .txt",
             "",
             "config",
             "clientes",
@@ -559,6 +559,25 @@ class AlphaOSChat:
         self._remember_client(phone, client["id"])
         return f"Operacao criada para {client['name']}.\nID: {client['id']}\nProximo: rodar {client['id']} monday"
 
+    def pending_briefing_name(self, phone: str) -> Optional[str]:
+        return _PENDING_BRIEFINGS.get(phone)
+
+    def handle_pending_briefing_text(self, phone: str, briefing_text: str, source_label: str = "texto") -> str:
+        pending_name = _PENDING_BRIEFINGS.get(phone)
+        if not pending_name:
+            return (
+                "Recebi o arquivo, mas eu nao estava aguardando um briefing.\n\n"
+                "Primeiro envie assim:\n"
+                "novo cliente Nome do Cliente"
+            )
+
+        briefing = (briefing_text or "").strip()
+        if len(briefing) < 20:
+            return f"Recebi pouco texto no {source_label} ainda. Me mande o briefing completo do cliente {pending_name}."
+
+        _PENDING_BRIEFINGS.pop(phone, None)
+        return self._create_client_response(phone, pending_name, briefing)
+
     def _maybe_consume_pending_briefing(self, phone: str, raw: str) -> Optional[str]:
         pending_name = _PENDING_BRIEFINGS.get(phone)
         if not pending_name:
@@ -568,12 +587,7 @@ class AlphaOSChat:
         if t.startswith(("novo cliente", "novo_cliente", "clientes", "status", "validar", "mostrar", "rodar", "config", "infra", "ajuda", "help", "menu")):
             return None
 
-        briefing = (raw or "").strip()
-        if len(briefing) < 20:
-            return f"Recebi pouco texto ainda. Me mande o briefing completo do cliente {pending_name}."
-
-        _PENDING_BRIEFINGS.pop(phone, None)
-        return self._create_client_response(phone, pending_name, briefing)
+        return self.handle_pending_briefing_text(phone, raw, "texto")
 
     def handle(self, phone: str, text: str) -> str:
         raw = (text or "").strip()
@@ -605,7 +619,7 @@ class AlphaOSChat:
                 return "Envie assim:\n\nnovo cliente Nome do Cliente\nBriefing completo aqui..."
             if not briefing:
                 _PENDING_BRIEFINGS[phone] = name
-                return f"Perfeito. Agora me mande o briefing completo do cliente {name} em texto."
+                return f"Perfeito. Agora me mande o briefing completo do cliente {name} em texto ou em arquivo .txt."
             return self._create_client_response(phone, name, briefing)
 
         if t in ("clientes", "listar clientes"):
