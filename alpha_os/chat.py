@@ -1,6 +1,7 @@
 import os
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from typing import Dict, Optional, Tuple
 
 import requests
@@ -64,6 +65,33 @@ STAGE_ALIASES = {
     "semanal": "weeklyAnalysis",
     "weekly": "weeklyAnalysis",
 }
+
+FOLLOWUP_HINTS = (
+    "e no google",
+    "e no meta",
+    "e a lp",
+    "e os criativos",
+    "e a copy",
+    "e o briefing",
+    "resuma",
+    "resume",
+    "me fala mais",
+    "me fale mais",
+    "e as campanhas",
+)
+
+LIST_QUESTION_HINTS = (
+    "esses sao todos os clientes",
+    "esses são todos os clientes",
+    "todos os clientes",
+    "quais sao os clientes",
+    "quais são os clientes",
+    "quantos clientes",
+    "lista de clientes",
+)
+
+_MEMORY_LAST_CLIENTS: Dict[str, str] = {}
+_PENDING_BRIEFINGS: Dict[str, str] = {}
 
 
 def _norm(text: str) -> str:
@@ -209,6 +237,12 @@ def _norm_cmp(text: str) -> str:
     t = re.sub(r"\s*-\s*", "-", t)
     t = re.sub(r"\s+", " ", t)
     return t
+
+
+def _match_ratio(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
 
 
 def _mark_stage(client: Dict, stage_key: str, status: str, message: str):
@@ -503,6 +537,44 @@ class AlphaOSChat:
             raise RuntimeError("Missing GOOGLE_SHEETS_SPREADSHEET_ID")
         self.store = AlphaOSStore(spreadsheet_id=spreadsheet_id)
 
+    def _remember_client(self, phone: str, client_id: str):
+        if not phone or not client_id:
+            return
+        _MEMORY_LAST_CLIENTS[phone] = client_id
+        try:
+            self.store.set_last_client_for_phone(phone, client_id)
+        except Exception:
+            pass
+
+    def _get_last_client_id(self, phone: str) -> Optional[str]:
+        if phone in _MEMORY_LAST_CLIENTS:
+            return _MEMORY_LAST_CLIENTS[phone]
+        try:
+            return self.store.get_last_client_for_phone(phone)
+        except Exception:
+            return None
+
+    def _create_client_response(self, phone: str, name: str, briefing: str) -> str:
+        client = self.store.create_client(name=name, briefing=briefing)
+        self._remember_client(phone, client["id"])
+        return f"Operacao criada para {client['name']}.\nID: {client['id']}\nProximo: rodar {client['id']} monday"
+
+    def _maybe_consume_pending_briefing(self, phone: str, raw: str) -> Optional[str]:
+        pending_name = _PENDING_BRIEFINGS.get(phone)
+        if not pending_name:
+            return None
+
+        t = _norm(raw)
+        if t.startswith(("novo cliente", "novo_cliente", "clientes", "status", "validar", "mostrar", "rodar", "config", "infra", "ajuda", "help", "menu")):
+            return None
+
+        briefing = (raw or "").strip()
+        if len(briefing) < 20:
+            return f"Recebi pouco texto ainda. Me mande o briefing completo do cliente {pending_name}."
+
+        _PENDING_BRIEFINGS.pop(phone, None)
+        return self._create_client_response(phone, pending_name, briefing)
+
     def handle(self, phone: str, text: str) -> str:
         raw = (text or "").strip()
         t = _norm(raw)
@@ -523,19 +595,28 @@ class AlphaOSChat:
         if t in ("config", "infra", "setup"):
             return _infra_status_text()
 
+        pending_reply = self._maybe_consume_pending_briefing(phone, raw)
+        if pending_reply:
+            return pending_reply
+
         if t.startswith("novo cliente") or t.startswith("novo_cliente"):
             name, briefing = _parse_new_client(raw)
-            if not name or not briefing:
+            if not name:
                 return "Envie assim:\n\nnovo cliente Nome do Cliente\nBriefing completo aqui..."
-            client = self.store.create_client(name=name, briefing=briefing)
-            self.store.set_last_client_for_phone(phone, client["id"])
-            return f"Operacao criada para {client['name']}.\nID: {client['id']}\nProximo: rodar {client['id']} monday"
+            if not briefing:
+                _PENDING_BRIEFINGS[phone] = name
+                return f"Perfeito. Agora me mande o briefing completo do cliente {name} em texto."
+            return self._create_client_response(phone, name, briefing)
 
         if t in ("clientes", "listar clientes"):
             clients = self._list_clients_view()
             if not clients:
                 return "Nenhum cliente criado ainda."
-            return "\n\n".join([f"{c['client_name']}\nID: {c['client_id']}\nStatus: {c['status']}" for c in clients[:20]])
+            lines = [f"Clientes encontrados: {len(clients)}", ""]
+            for client in clients[:80]:
+                lines.append(f"{client['client_name']}\nID: {client['client_id']}\nStatus: {client['status']}")
+                lines.append("")
+            return "\n".join(lines).strip()
 
         if t.startswith("status"):
             term = raw.split(" ", 1)[1].strip() if " " in raw else ""
@@ -709,49 +790,103 @@ class AlphaOSChat:
         except Exception as exc:
             return f"Deu erro ao consultar a Monday: {exc}"
 
-    def _resolve_client(self, phone: str, term: str) -> Optional[Dict]:
+    def _find_client_in_view(self, search: str) -> Optional[Dict]:
+        query = (search or "").strip()
+        if not query:
+            return None
+
+        query_norm = _norm_cmp(query)
+        query_compact = re.sub(r"[^a-z0-9]+", "", query_norm)
+
+        for entry in self._list_clients_view():
+            client_id = str(entry.get("client_id") or "").strip()
+            client_name = str(entry.get("client_name") or "").strip()
+            if query_norm in (_norm_cmp(client_id), _norm_cmp(client_name)):
+                return self.store.get_client(client_id)
+
+        best_client = None
+        best_score = 0.0
+        for entry in self._list_clients_view():
+            client_id = str(entry.get("client_id") or "").strip()
+            client_name = str(entry.get("client_name") or "").strip()
+            name_norm = _norm_cmp(client_name)
+            compact_name = re.sub(r"[^a-z0-9]+", "", name_norm)
+            score = 0.0
+            if query_norm in name_norm or name_norm in query_norm:
+                score = 0.93
+            else:
+                score = max(
+                    _match_ratio(query_norm, name_norm),
+                    _match_ratio(query_compact, compact_name),
+                )
+            if score > best_score:
+                best_client = self.store.get_client(client_id)
+                best_score = score
+
+        if best_client and best_score >= 0.72:
+            return best_client
+        return None
+
+    def _resolve_client(self, phone: str, term: str, allow_last: bool = True) -> Optional[Dict]:
         term = (term or "").strip()
         if not term:
-            last = self.store.get_last_client_for_phone(phone)
+            if not allow_last:
+                return None
+            last = self._get_last_client_id(phone)
             if last:
-                return self.store.get_client(last)
+                return self._find_client_in_view(last) or self.store.get_client(last)
             return None
+
         client = self.store.find_client(term)
         if client:
-            self.store.set_last_client_for_phone(phone, client.get("id"))
+            self._remember_client(phone, client.get("id"))
             return client
+
+        client = self._find_client_in_view(term)
+        if client:
+            self._remember_client(phone, client.get("id"))
+            return client
+
         monday_client = find_client_boards(term)
         if monday_client:
             client = self._virtual_client_from_monday(monday_client)
             try:
                 self.store.upsert_client(client)
-                self.store.set_last_client_for_phone(phone, client.get("id"))
             except Exception:
                 pass
+            self._remember_client(phone, client.get("id"))
             return client
         return None
 
     def _resolve_client_from_text(self, phone: str, raw: str) -> Optional[Dict]:
-        text = _norm_cmp(raw)
-        client = self._resolve_client(phone, raw)
-        if client:
-            return client
+        text = (raw or "").strip()
+        normalized = _norm_cmp(text)
+        candidates = [text]
+
+        patterns = [
+            r"(?:cliente\s+)?(.+?)\s+na\s+monday",
+            r"cliente\s+(.+)",
+            r"para\s+(.+)",
+            r"do cliente\s+(.+)",
+            r"de\s+(.+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                candidates.append(match.group(1).strip(" ?!."))
+
         for item in self.store.list_clients():
             client_id = str(item.get("client_id") or "").strip()
             client_name = str(item.get("client_name") or "").strip()
-            if client_id and client_id.lower() in text:
+            if client_id and _norm_cmp(client_id) in normalized:
                 return self.store.get_client(client_id)
-            if client_name and _norm_cmp(client_name) in text:
+            if client_name and _norm_cmp(client_name) in normalized:
                 return self.store.get_client(client_id)
-        monday_client = find_client_boards(raw)
-        if monday_client:
-            client = self._virtual_client_from_monday(monday_client)
-            try:
-                self.store.upsert_client(client)
-                self.store.set_last_client_for_phone(phone, client.get("id"))
-            except Exception:
-                pass
-            return client
+
+        for candidate in candidates:
+            client = self._resolve_client(phone, candidate, allow_last=False)
+            if client:
+                return client
         return None
 
     def _virtual_client_from_monday(self, monday_match: Dict) -> Dict:
@@ -863,17 +998,33 @@ class AlphaOSChat:
         return "\n".join(sections)
 
     def _answer_general_question(self, phone: str, question: str) -> str:
+        question_norm = _norm_cmp(question)
+
+        if any(hint in question_norm for hint in LIST_QUESTION_HINTS):
+            clients = self._list_clients_view()
+            if not clients:
+                return "Ainda nao encontrei clientes na Monday."
+            names = ", ".join(client.get("client_name", "") for client in clients[:60])
+            return f"Hoje eu encontrei {len(clients)} clientes na Monday.\n\n{names}"
+
         client = self._resolve_client_from_text(phone, question)
-        if not client:
-            last_client_id = self.store.get_last_client_for_phone(phone)
+        if not client and any(hint in question_norm for hint in FOLLOWUP_HINTS):
+            last_client_id = self._get_last_client_id(phone)
             if last_client_id:
-                client = self.store.get_client(last_client_id)
+                client = self._find_client_in_view(last_client_id) or self.store.get_client(last_client_id)
         if not client:
             return (
                 "Consigo responder sobre clientes da Monday, mas preciso do nome do cliente na pergunta ou de um contexto anterior.\n"
                 "Exemplo: mostrar google Sette Arquitetura\n"
                 "Ou: o que foi criado para Clinica da Coluna?"
             )
+
+        self._remember_client(phone, client.get("id"))
+
+        if "google" in question_norm:
+            return self._show_platform_text(client, "google")
+        if "meta" in question_norm:
+            return self._show_platform_text(client, "meta")
 
         context = self._monday_context_for_client(client)
         if not context.strip():
