@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from copy import deepcopy
 from datetime import datetime, timezone
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import gspread
@@ -37,6 +38,7 @@ DETACHED_TEXT_PATHS = (
 
 INLINE_JSON_SOFT_LIMIT = 45000
 BLOB_CHUNK_SIZE = 45000
+SHEETS_CACHE_TTL_SECONDS = int(os.getenv("ALPHA_OS_SHEETS_CACHE_TTL_SECONDS", "60"))
 
 
 def _default_platform_config() -> Dict[str, Any]:
@@ -171,6 +173,10 @@ def _chunk_text(text: str, chunk_size: int = BLOB_CHUNK_SIZE) -> List[str]:
     return [value[i : i + chunk_size] for i in range(0, len(value), chunk_size)]
 
 
+def _copy_records(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [dict(row) for row in (rows or [])]
+
+
 def _load_google_credentials() -> Credentials:
     env_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
     if env_json:
@@ -215,15 +221,41 @@ class AlphaOSStore:
         self._clients_ws = _open_or_create_worksheet(sheet, CLIENTS_SHEET_NAME, CLIENTS_HEADERS)
         self._sessions_ws = _open_or_create_worksheet(sheet, SESSIONS_SHEET_NAME, SESSIONS_HEADERS)
         self._blobs_ws = _open_or_create_worksheet(sheet, BLOBS_SHEET_NAME, BLOBS_HEADERS)
+        self._clients_cache: Optional[List[Dict[str, Any]]] = None
+        self._sessions_cache: Optional[List[Dict[str, Any]]] = None
+        self._blobs_cache: Optional[List[Dict[str, Any]]] = None
+        self._clients_cache_at = 0.0
+        self._sessions_cache_at = 0.0
+        self._blobs_cache_at = 0.0
+
+    def _cache_fresh(self, cached_at: float) -> bool:
+        return bool(cached_at) and (time.monotonic() - cached_at) < SHEETS_CACHE_TTL_SECONDS
+
+    def _read_cached_records(self, worksheet, cache_attr: str, cache_at_attr: str) -> List[Dict[str, Any]]:
+        cached = getattr(self, cache_attr)
+        cached_at = getattr(self, cache_at_attr)
+        if cached is not None and self._cache_fresh(cached_at):
+            return _copy_records(cached)
+
+        try:
+            rows = worksheet.get_all_records()
+            setattr(self, cache_attr, rows)
+            setattr(self, cache_at_attr, time.monotonic())
+            return _copy_records(rows)
+        except Exception as exc:
+            if cached is not None:
+                logger.warning("Falha ao ler planilha; usando cache antigo. Erro: %s", exc)
+                return _copy_records(cached)
+            raise
 
     def _clients_records(self) -> List[Dict[str, Any]]:
-        return self._clients_ws.get_all_records()
+        return self._read_cached_records(self._clients_ws, "_clients_cache", "_clients_cache_at")
 
     def _sessions_records(self) -> List[Dict[str, Any]]:
-        return self._sessions_ws.get_all_records()
+        return self._read_cached_records(self._sessions_ws, "_sessions_cache", "_sessions_cache_at")
 
     def _blob_records(self) -> List[Dict[str, Any]]:
-        return self._blobs_ws.get_all_records()
+        return self._read_cached_records(self._blobs_ws, "_blobs_cache", "_blobs_cache_at")
 
     def _store_blob_field(self, client_id: str, field_key: str, value: str) -> Dict[str, Any]:
         text = str(value or "")
@@ -234,6 +266,19 @@ class AlphaOSStore:
         ]
         if rows:
             self._blobs_ws.append_rows(rows, value_input_option="RAW")
+            cached = list(self._blobs_cache or [])
+            for row in rows:
+                cached.append(
+                    {
+                        "client_id": row[0],
+                        "field_key": row[1],
+                        "version": row[2],
+                        "part_index": row[3],
+                        "content": row[4],
+                    }
+                )
+            self._blobs_cache = cached
+            self._blobs_cache_at = time.monotonic()
         return {
             "sheet": BLOBS_SHEET_NAME,
             "version": version,
@@ -325,10 +370,11 @@ class AlphaOSStore:
         term_norm = (term or "").strip().lower()
         if not term_norm:
             return None
-        for client in self.list_clients():
+        clients = self.list_clients()
+        for client in clients:
             if term_norm == client["client_id"].lower():
                 return self.get_client(client["client_id"])
-        for client in self.list_clients():
+        for client in clients:
             if term_norm in client["client_name"].lower():
                 return self.get_client(client["client_id"])
         return None
@@ -385,13 +431,37 @@ class AlphaOSStore:
             self._clients_ws.append_row(
                 [client_id, client.get("name") or client.get("client_name") or "", created_at, now, payload]
             )
+            cached = list(self._clients_cache or [])
+            cached.append(
+                {
+                    "client_id": client_id,
+                    "client_name": client.get("name") or client.get("client_name") or "",
+                    "created_at": created_at,
+                    "updated_at": now,
+                    "data_json": payload,
+                }
+            )
+            self._clients_cache = cached
+            self._clients_cache_at = time.monotonic()
             return
 
         row_index, _ = found
         # Update 4 columns (name, updated_at, data_json)
-        self._clients_ws.update_cell(row_index, 2, client.get("name") or client.get("client_name") or "")
+        client_name = client.get("name") or client.get("client_name") or ""
+        self._clients_ws.update_cell(row_index, 2, client_name)
         self._clients_ws.update_cell(row_index, 4, now)
         self._clients_ws.update_cell(row_index, 5, payload)
+        if self._clients_cache is not None:
+            cached = list(self._clients_cache)
+            cache_index = row_index - 2
+            if 0 <= cache_index < len(cached):
+                updated_row = dict(cached[cache_index])
+                updated_row["client_name"] = client_name
+                updated_row["updated_at"] = now
+                updated_row["data_json"] = payload
+                cached[cache_index] = updated_row
+                self._clients_cache = cached
+                self._clients_cache_at = time.monotonic()
 
     def create_client(self, name: str, briefing: str) -> Dict[str, Any]:
         name = str(name or "").strip()
@@ -458,8 +528,22 @@ class AlphaOSStore:
             if str(row.get("phone")) == phone:
                 self._sessions_ws.update_cell(idx, 2, client_id)
                 self._sessions_ws.update_cell(idx, 3, now)
+                if self._sessions_cache is not None:
+                    cached = list(self._sessions_cache)
+                    cache_index = idx - 2
+                    if 0 <= cache_index < len(cached):
+                        updated_row = dict(cached[cache_index])
+                        updated_row["last_client_id"] = client_id
+                        updated_row["updated_at"] = now
+                        cached[cache_index] = updated_row
+                        self._sessions_cache = cached
+                        self._sessions_cache_at = time.monotonic()
                 return
         self._sessions_ws.append_row([phone, client_id, now])
+        cached = list(self._sessions_cache or [])
+        cached.append({"phone": phone, "last_client_id": client_id, "updated_at": now})
+        self._sessions_cache = cached
+        self._sessions_cache_at = time.monotonic()
 
     def get_last_client_for_phone(self, phone: str) -> Optional[str]:
         phone = str(phone or "").strip()
