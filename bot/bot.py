@@ -628,10 +628,14 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 def main():
     global sheets
 
-    sheets = SheetsManager()
-
     # Ativa o servidor web fake para o Render.com não desligar o bot (Free Tier)
     keep_alive()
+
+    try:
+        sheets = SheetsManager()
+    except Exception as exc:
+        logger.error("Falha ao iniciar SheetsManager no bot principal: %s", exc, exc_info=True)
+        sheets = None
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 

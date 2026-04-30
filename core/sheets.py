@@ -5,6 +5,7 @@ Gerencia usuários, estados, créditos e histórico de conversas para múltiplos
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
+import time
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -13,6 +14,9 @@ from google.oauth2.service_account import Credentials
 from .config_base import GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SHEETS_SPREADSHEET_ID, PLANS, DEFAULT_PLAN
 
 logger = logging.getLogger(__name__)
+
+SHEETS_INIT_RETRIES = 6
+SHEETS_INIT_BACKOFF_SECONDS = 2
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -49,11 +53,31 @@ class SheetsManager:
                 raise
         else:
             creds = Credentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_JSON, scopes=SCOPES)
-            
+
         self._client = gspread.authorize(creds)
-        self._sheet  = self._client.open_by_key(GOOGLE_SHEETS_SPREADSHEET_ID)
-        self._ws     = self._sheet.worksheet("Usuarios")
-        logger.info("Google Sheets conectado.")
+
+        last_exc = None
+        for attempt in range(1, SHEETS_INIT_RETRIES + 1):
+            try:
+                self._sheet = self._client.open_by_key(GOOGLE_SHEETS_SPREADSHEET_ID)
+                self._ws = self._sheet.worksheet("Usuarios")
+                logger.info("Google Sheets conectado.")
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= SHEETS_INIT_RETRIES:
+                    break
+                wait_seconds = SHEETS_INIT_BACKOFF_SECONDS * attempt
+                logger.warning(
+                    "Falha ao iniciar Google Sheets core (tentativa %s/%s). Nova tentativa em %ss. Erro: %s",
+                    attempt,
+                    SHEETS_INIT_RETRIES,
+                    wait_seconds,
+                    exc,
+                )
+                time.sleep(wait_seconds)
+
+        raise last_exc
 
     def _get_row(self, identifier: str, col_name: str = "chat_id") -> Optional[Dict[str, Any]]:
         """Busca uma linha por qualquer coluna identificadora."""
