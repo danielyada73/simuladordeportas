@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import unicodedata
 from difflib import SequenceMatcher
 from typing import Dict, Optional, Tuple
@@ -441,6 +442,36 @@ def _set_monday_status(board_id: str, item_id: str, status_value: str, preferred
         },
     )
     return column_id
+
+
+def _get_monday_status_text(board_id: str, item_id: str, preferred_title: str = "Status") -> str:
+    if not board_id or not item_id:
+        return ""
+    column_id = _discover_status_column_id(board_id, preferred_title)
+    if not column_id:
+        return ""
+
+    query = (
+        "query ($item_id: [ID!], $column_id: [String!]) { "
+        "items(ids: $item_id) { "
+        "column_values(ids: $column_id) { id text } "
+        "} "
+        "}"
+    )
+    data = _monday_graphql(
+        query,
+        {
+            "item_id": [str(item_id)],
+            "column_id": [column_id],
+        },
+    )
+    items = data.get("items") or []
+    if not items:
+        return ""
+    column_values = items[0].get("column_values") or []
+    if not column_values:
+        return ""
+    return str(column_values[0].get("text") or "").strip()
 
 
 def _discover_monday_artifacts(client_name: str) -> Dict[str, str]:
@@ -1249,6 +1280,11 @@ Contexto da Monday:
             if phase2_mode == "monday_status":
                 try:
                     status_value = os.getenv("MONDAY_PHASE2_STATUS_VALUE", "Feito").strip() or "Feito"
+                    intermediate_value = os.getenv("MONDAY_PHASE2_INTERMEDIATE_STATUS_VALUE", "Em progresso").strip() or "Em progresso"
+                    current_status = _get_monday_status_text(briefing_board_id, briefing_item_id)
+                    if _norm_cmp(current_status) == _norm_cmp(status_value) and _norm_cmp(intermediate_value) != _norm_cmp(status_value):
+                        _set_monday_status(briefing_board_id, briefing_item_id, intermediate_value)
+                        time.sleep(0.6)
                     column_id = _set_monday_status(briefing_board_id, briefing_item_id, status_value)
                     ok = True
                     message = (
