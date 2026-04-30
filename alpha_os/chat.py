@@ -307,6 +307,13 @@ def _monday_token() -> str:
     return os.getenv("MONDAY_API_TOKEN", "").strip()
 
 
+def _phase2_trigger_mode() -> str:
+    mode = os.getenv("ALPHA_OS_PHASE2_TRIGGER_MODE", "monday_status").strip().lower()
+    if mode in ("webhook", "status_webhook", "legacy"):
+        return "webhook"
+    return "monday_status"
+
+
 def _env_value(name: str) -> str:
     return os.getenv(name, "").strip()
 
@@ -316,6 +323,7 @@ def _is_set(name: str) -> bool:
 
 
 def _infra_status_text() -> str:
+    phase2_mode = _phase2_trigger_mode()
     checks = [
         ("ALPHA_OS_MODE", _env_value("ALPHA_OS_MODE").lower() in ("1", "true", "yes", "on")),
         ("WHATSAPP_TOKEN", _is_set("WHATSAPP_TOKEN")),
@@ -326,7 +334,10 @@ def _infra_status_text() -> str:
         ("GEMINI_API_KEY ou OPENAI_API_KEY", _is_set("GEMINI_API_KEY") or _is_set("OPENAI_API_KEY")),
         ("MONDAY_API_TOKEN", _is_set("MONDAY_API_TOKEN")),
         ("N8N_ONBOARDING_WEBHOOK_URL", _is_set("N8N_ONBOARDING_WEBHOOK_URL")),
-        ("N8N_PHASE2_WEBHOOK_URL", _is_set("N8N_PHASE2_WEBHOOK_URL")),
+        (
+            "N8N_PHASE2_WEBHOOK_URL",
+            True if phase2_mode == "monday_status" else _is_set("N8N_PHASE2_WEBHOOK_URL"),
+        ),
         ("N8N_GOOGLE_PUBLISH_WEBHOOK_URL", _is_set("N8N_GOOGLE_PUBLISH_WEBHOOK_URL")),
         ("N8N_META_PUBLISH_WEBHOOK_URL", _is_set("N8N_META_PUBLISH_WEBHOOK_URL")),
         ("N8N_DAILY_ANALYSIS_WEBHOOK_URL", _is_set("N8N_DAILY_ANALYSIS_WEBHOOK_URL")),
@@ -350,7 +361,11 @@ def _infra_status_text() -> str:
             "",
             "Fora do Render, ainda precisa existir:",
             "- n8n fluxo 01 ativo e com Form URL",
-            "- n8n fluxo 02 ativo em /webhook/status_monday",
+            (
+                "- automacao do Monday ativa para disparar o fluxo 02 quando 'CRIAR RESUMO DO CLIENTE' mudar para Feito"
+                if phase2_mode == "monday_status"
+                else "- n8n fluxo 02 ativo em /webhook/status_monday"
+            ),
             "- se usar publicacao direta: Google Ads e Meta com acesso valido no proprio Render",
             "- se usar n8n para publicar: fluxo Google ativo e fluxo Meta ativo",
             "- credenciais do Monday, Google Docs, Gemini, Google Ads e Meta nos lugares certos",
@@ -374,6 +389,58 @@ def _monday_graphql(query: str, variables: Optional[Dict] = None) -> Dict:
     if payload.get("errors"):
         raise RuntimeError(str(payload["errors"])[:300])
     return payload.get("data") or {}
+
+
+def _discover_status_column_id(board_id: str, preferred_title: str = "Status") -> Optional[str]:
+    if not board_id:
+        return None
+    q = (
+        "query { "
+        f"boards (ids: [{board_id}]) {{ "
+        "columns { id title type } "
+        "} "
+        "}"
+    )
+    data = _monday_graphql(q)
+    boards = data.get("boards") or []
+    if not boards:
+        return None
+    columns = boards[0].get("columns") or []
+    preferred_norm = _norm_cmp(preferred_title)
+    fallback = None
+    for column in columns:
+        column_id = str(column.get("id") or "").strip()
+        title_norm = _norm_cmp(column.get("title", ""))
+        column_type = str(column.get("type") or "").strip().lower()
+        if title_norm == preferred_norm:
+            return column_id or None
+        if not fallback and (column_id == "status" or column_type in ("color", "status")):
+            fallback = column_id
+    return fallback
+
+
+def _set_monday_status(board_id: str, item_id: str, status_value: str, preferred_title: str = "Status") -> str:
+    if not board_id or not item_id:
+        raise RuntimeError("board_id ou item_id ausente para atualizar status no Monday.")
+    column_id = _discover_status_column_id(board_id, preferred_title)
+    if not column_id:
+        raise RuntimeError("Nao achei a coluna de status nesse board do Monday.")
+
+    query = (
+        "mutation ($board_id: ID!, $item_id: ID!, $column_id: String!, $value: String!) { "
+        "change_simple_column_value(board_id: $board_id, item_id: $item_id, column_id: $column_id, value: $value) { id } "
+        "}"
+    )
+    _monday_graphql(
+        query,
+        {
+            "board_id": str(board_id),
+            "item_id": str(item_id),
+            "column_id": column_id,
+            "value": status_value,
+        },
+    )
+    return column_id
 
 
 def _discover_monday_artifacts(client_name: str) -> Dict[str, str]:
@@ -1113,11 +1180,13 @@ Contexto da Monday:
         meta = STAGES.get(stage_key)
         env = meta["env"]
         url = os.getenv(env, "").strip()
+        phase2_mode = _phase2_trigger_mode()
 
         stages = client.setdefault("stages", {})
         stage = stages.setdefault(stage_key, {"status": "waiting", "message": ""})
 
-        if not url:
+        requires_url = not (stage_key == "phase2" and phase2_mode == "monday_status")
+        if requires_url and not url:
             stage["status"] = "needs_config"
             stage["message"] = f"Falta configurar {env}."
             self.store.upsert_client(client)
@@ -1143,8 +1212,9 @@ Contexto da Monday:
                 ok, message = _call_webhook(url, payload)
 
         elif stage_key == "phase2":
-            # Para disparar o workflow 02 (status_monday) precisamos do pulseId do item
-            # "CRIAR RESUMO DO CLIENTE" no board de briefing.
+            # O fluxo correto do cliente e mudar o status do item
+            # "CRIAR RESUMO DO CLIENTE" para "Feito" no board de briefing.
+            # Isso deixa a automacao nativa do Monday disparar o workflow 02.
             artifacts = client.setdefault("artifacts", {})
             monday = artifacts.setdefault("monday", {})
 
@@ -1166,6 +1236,7 @@ Contexto da Monday:
                 return _format_status(client)
 
             briefing_item_id = str(monday.get("briefing_item_id") or "").strip()
+            briefing_board_id = str(monday.get("briefing_board_id") or "").strip()
             if not briefing_item_id:
                 stage["status"] = "blocked"
                 stage["message"] = (
@@ -1175,8 +1246,21 @@ Contexto da Monday:
                 self.store.upsert_client(client)
                 return _format_status(client)
 
-            event_payload = {"event": {"type": "update_column_value", "pulseId": int(briefing_item_id)}}
-            ok, message = _call_webhook(url, event_payload)
+            if phase2_mode == "monday_status":
+                try:
+                    status_value = os.getenv("MONDAY_PHASE2_STATUS_VALUE", "Feito").strip() or "Feito"
+                    column_id = _set_monday_status(briefing_board_id, briefing_item_id, status_value)
+                    ok = True
+                    message = (
+                        f"Status do Monday atualizado para '{status_value}' no item 'CRIAR RESUMO DO CLIENTE' "
+                        f"(coluna {column_id})."
+                    )
+                except Exception as exc:
+                    ok = False
+                    message = f"Erro ao atualizar status no Monday: {exc}"
+            else:
+                event_payload = {"event": {"type": "update_column_value", "pulseId": int(briefing_item_id)}}
+                ok, message = _call_webhook(url, event_payload)
 
         elif stage_key == "googlePublish":
             artifacts = client.setdefault("artifacts", {})
