@@ -824,10 +824,16 @@ class AlphaOSChat:
         return default_owner
 
     def _extract_assignee_name(self, raw: str, phone: str) -> str:
-        text = str(raw or "")
-        for candidate in ("Daniel", "Jefferson", "Gustavo"):
-            if re.search(rf"\b{re.escape(candidate)}\b", text, flags=re.IGNORECASE):
-                return candidate
+        text = _norm_cmp(str(raw or ""))
+        aliases = {
+            "Daniel": ("daniel", "daniel yada", "dani"),
+            "Jefferson": ("jefferson", "jeferson", "jeff", "jef", "je.belleck1@gmail.com"),
+            "Gustavo": ("gustavo", "gustavo belleck"),
+        }
+        for canonical, variants in aliases.items():
+            for variant in variants:
+                if variant and variant in text:
+                    return canonical
         if re.search(r"\bminhas?\b|\bmeu\b|\bminha\b|\bmim\b|\bpra mim\b|\bpara mim\b", text, flags=re.IGNORECASE):
             return self._known_assignee_for_phone(phone)
         return self._known_assignee_for_phone(phone)
@@ -836,6 +842,21 @@ class AlphaOSChat:
         question = (raw or "").strip()
         question_norm = _norm_cmp(question)
         assignee_name = self._extract_assignee_name(question, phone)
+
+        mentions_tasks = any(token in question_norm for token in ("tarefa", "tarefas", "agenda", "demanda", "demandas"))
+        mentions_today = "hoje" in question_norm
+        mentions_tomorrow = "amanha" in question_norm or "amanhã" in question_norm
+        mentions_week = "semana" in question_norm or "proximos dias" in question_norm or "próximos dias" in question_norm
+        mentions_overdue = any(hint in question_norm for hint in OVERDUE_HINTS) or "atrasad" in question_norm or "vencid" in question_norm
+
+        if mentions_overdue and (mentions_tasks or "o que" in question_norm or "quais" in question_norm):
+            return {"intent": "report_overdue", "assignee_name": assignee_name}
+        if mentions_today and (mentions_tasks or "o que tenho" in question_norm or "o que eu tenho" in question_norm or "quais" in question_norm):
+            return {"intent": "report_today", "assignee_name": assignee_name}
+        if mentions_tomorrow and (mentions_tasks or "quais" in question_norm or "o que tenho" in question_norm or "o que eu tenho" in question_norm):
+            return {"intent": "report_tomorrow", "assignee_name": assignee_name}
+        if mentions_week and (mentions_tasks or "quais" in question_norm or "proximas" in question_norm or "próximas" in question_norm):
+            return {"intent": "report_week", "assignee_name": assignee_name}
 
         if any(hint in question_norm for hint in TODAY_HINTS):
             return {"intent": "report_today", "assignee_name": assignee_name}
