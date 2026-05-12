@@ -268,6 +268,33 @@ def _extract_client_name(board_name: str, board_type: Optional[str]) -> Optional
     return cleaned or None
 
 
+def _looks_like_valid_client_name(client_name: str, board_type: Optional[str]) -> bool:
+    name = _norm(client_name)
+    if not name:
+        return False
+    if len(name) < 4:
+        return False
+    generic_names = {
+        "briefing",
+        "lp",
+        "saldo",
+        "campanhas",
+        "otimizacoes",
+        "otimizacoes es",
+        "criacao de lp",
+        "criacao de lp e estrutura",
+        "e estrutura",
+        "estrutura",
+    }
+    if name in generic_names:
+        return False
+    for marker in BOARD_TYPE_MARKERS.get(board_type or "", []):
+        marker_norm = _norm(marker)
+        if name == marker_norm:
+            return False
+    return True
+
+
 def _typed_boards(boards: List[Dict[str, str]]) -> Dict[str, Dict[str, str]]:
     typed: Dict[str, Dict[str, str]] = {}
     for board in boards:
@@ -284,7 +311,7 @@ def list_client_groups(limit: int = 500) -> List[Dict[str, Any]]:
         if not board_type:
             continue
         client_name = _extract_client_name(board["name"], board_type)
-        if not client_name:
+        if not client_name or not _looks_like_valid_client_name(client_name, board_type):
             continue
         key = _norm(client_name)
         entry = groups.setdefault(key, {"client_name": client_name, "boards": []})

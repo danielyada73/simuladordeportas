@@ -21,6 +21,8 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 _alpha_chat = None
 _processed_message_ids = {}
 _processed_lock = threading.Lock()
+_phone_locks = {}
+_phone_locks_guard = threading.Lock()
 _PROCESSED_TTL_SECONDS = 900
 
 
@@ -51,6 +53,16 @@ def _is_duplicate_message(message_id: str) -> bool:
             return True
         _processed_message_ids[message_id] = now
     return False
+
+
+def _phone_lock(phone: str):
+    key = str(phone or "").strip() or "_unknown"
+    with _phone_locks_guard:
+        lock = _phone_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _phone_locks[key] = lock
+        return lock
 
 
 def _split_text_chunks(text: str, limit: int = 3500):
@@ -311,138 +323,138 @@ def process_webhook(data: dict, sheets_manager):
             logger.info("Mensagem duplicada ignorada: %s", msg_id)
             return
 
-        if ALPHA_OS_MODE:
-            try:
-                _handle_alpha_os_message(phone, msg_type, message)
-            except Exception as exc:
-                logger.error("Erro Alpha OS: %s", exc, exc_info=True)
-                send_text(phone, f"Alpha OS falhou ao responder agora. Erro: {exc}")
-            return
-
-        if msg_type == "text":
-            text = message.get("text", {}).get("body", "").strip()
-            try:
-                from alpha_os.chat import is_alpha_os_command  # type: ignore
-
-                if is_alpha_os_command(text):
+        with _phone_lock(phone):
+            if ALPHA_OS_MODE:
+                try:
                     _handle_alpha_os_message(phone, msg_type, message)
-                    return
-            except Exception as exc:
-                logger.error("Erro Alpha OS (modo comando): %s", exc)
-
-        if sheets_manager is None:
-            send_text(phone, "Servico temporariamente sem acesso ao simulador antigo.")
-            return
-
-        user = sheets_manager.get_user(phone_number=phone)
-
-        if not user:
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bot"))
-            from config import PLANS, DEFAULT_PLAN
-
-            user = sheets_manager.create_user_whatsapp(phone)
-            send_text(
-                phone,
-                "Ola! Seja bem-vindo ao Simulador de Portas!\n\n"
-                "Envie a foto do ambiente onde voce quer instalar a porta.",
-            )
-            return
-
-        estado = user.get("estado", "AGUARDANDO_AMBIENTE")
-        creditos = int(user.get("creditos_restantes", 0))
-
-        if msg_type == "text":
-            text = message.get("text", {}).get("body", "").strip()
-
-            if text.lower() in ("oi", "olá", "ola", "inicio", "start", "menu", "comecar", "começar"):
-                nome = user.get("nome", "")
-                if nome:
-                    send_text(
-                        phone,
-                        f"Ola, *{nome}*!\n\n"
-                        f"Voce tem *{creditos}* simulacao(oes) disponivel(eis).\n\n"
-                        "Envie a foto do ambiente para comecar!",
-                    )
-                else:
-                    send_text(phone, "Ola! Qual e o seu nome?")
-                sheets_manager.update_state_whatsapp(phone, "AGUARDANDO_AMBIENTE")
+                except Exception as exc:
+                    logger.error("Erro Alpha OS: %s", exc, exc_info=True)
+                    send_text(phone, f"Alpha OS falhou ao responder agora. Erro: {exc}")
                 return
 
-            if not user.get("nome"):
-                sheets_manager.save_name_whatsapp(phone, text)
-                sheets_manager.update_state_whatsapp(phone, "AGUARDANDO_AMBIENTE")
-                send_text(phone, f"Prazer, *{text}*!\n\nEnvie a foto do ambiente onde voce quer instalar a porta.")
+            if msg_type == "text":
+                text = message.get("text", {}).get("body", "").strip()
+                try:
+                    from alpha_os.chat import is_alpha_os_command  # type: ignore
+
+                    if is_alpha_os_command(text):
+                        _handle_alpha_os_message(phone, msg_type, message)
+                        return
+                except Exception as exc:
+                    logger.error("Erro Alpha OS (modo comando): %s", exc)
+
+            if sheets_manager is None:
+                send_text(phone, "Servico temporariamente sem acesso ao simulador antigo.")
                 return
 
-            if estado == "AGUARDANDO_FEEDBACK":
-                if text in ("1", "gerar novamente", "refazer"):
-                    _handle_regenerate(phone, user, sheets_manager)
-                elif text in ("2", "novo ambiente", "outro"):
-                    sheets_manager.reset_images_whatsapp(phone)
+            user = sheets_manager.get_user(phone_number=phone)
+
+            if not user:
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bot"))
+                from config import PLANS, DEFAULT_PLAN
+
+                user = sheets_manager.create_user_whatsapp(phone)
+                send_text(
+                    phone,
+                    "Ola! Seja bem-vindo ao Simulador de Portas!\n\n"
+                    "Envie a foto do ambiente onde voce quer instalar a porta.",
+                )
+                return
+
+            estado = user.get("estado", "AGUARDANDO_AMBIENTE")
+            creditos = int(user.get("creditos_restantes", 0))
+
+            if msg_type == "text":
+                text = message.get("text", {}).get("body", "").strip()
+
+                if text.lower() in ("oi", "ol?", "ola", "inicio", "start", "menu", "comecar", "come?ar"):
+                    nome = user.get("nome", "")
+                    if nome:
+                        send_text(
+                            phone,
+                            f"Ola, *{nome}*!\n\n"
+                            f"Voce tem *{creditos}* simulacao(oes) disponivel(eis).\n\n"
+                            "Envie a foto do ambiente para comecar!",
+                        )
+                    else:
+                        send_text(phone, "Ola! Qual e o seu nome?")
                     sheets_manager.update_state_whatsapp(phone, "AGUARDANDO_AMBIENTE")
-                    send_text(phone, "Vamos simular outro ambiente.\n\nEnvie a foto do novo ambiente.")
-                elif text in ("3", "encerrar", "obrigado", "ok"):
-                    sheets_manager.update_state_whatsapp(phone, "ENCERRADO")
-                    send_text(phone, "Obrigado por usar o Simulador de Portas. Ate logo.")
-                else:
+                    return
+
+                if not user.get("nome"):
+                    sheets_manager.save_name_whatsapp(phone, text)
+                    sheets_manager.update_state_whatsapp(phone, "AGUARDANDO_AMBIENTE")
+                    send_text(phone, f"Prazer, *{text}*!\n\nEnvie a foto do ambiente onde voce quer instalar a porta.")
+                    return
+
+                if estado == "AGUARDANDO_FEEDBACK":
+                    if text in ("1", "gerar novamente", "refazer"):
+                        _handle_regenerate(phone, user, sheets_manager)
+                    elif text in ("2", "novo ambiente", "outro"):
+                        sheets_manager.reset_images_whatsapp(phone)
+                        sheets_manager.update_state_whatsapp(phone, "AGUARDANDO_AMBIENTE")
+                        send_text(phone, "Vamos simular outro ambiente.\n\nEnvie a foto do novo ambiente.")
+                    elif text in ("3", "encerrar", "obrigado", "ok"):
+                        sheets_manager.update_state_whatsapp(phone, "ENCERRADO")
+                        send_text(phone, "Obrigado por usar o Simulador de Portas. Ate logo.")
+                    else:
+                        send_text(
+                            phone,
+                            "Escolha uma opcao:\n\n"
+                            "1. Gerar novamente\n"
+                            "2. Simular outro ambiente\n"
+                            "3. Encerrar atendimento",
+                        )
+                    return
+
+                send_text(phone, "Por favor, envie uma imagem para continuarmos.")
+                return
+
+            if msg_type == "image":
+                image_info = message.get("image", {})
+                media_id = image_info.get("id")
+                if not media_id:
+                    send_text(phone, "Nao consegui processar a imagem. Tente novamente.")
+                    return
+
+                path = download_media(media_id)
+                if not path:
+                    send_text(phone, "Erro ao baixar a imagem. Envie novamente.")
+                    return
+
+                if estado in ("AGUARDANDO_AMBIENTE", "NOVO"):
+                    send_text(phone, "Foto do ambiente recebida.")
+                    sheets_manager.save_image_url_whatsapp(phone, "foto_ambiente_url", path)
+                    sheets_manager.update_state_whatsapp(phone, "AGUARDANDO_PORTA")
+                    send_text(phone, "Agora envie a foto do modelo de porta que voce deseja experimentar.")
+                    return
+
+                if estado == "AGUARDANDO_PORTA":
+                    if creditos <= 0:
+                        send_text(phone, "Voce usou todas as suas simulacoes.")
+                        sheets_manager.update_state_whatsapp(phone, "SEM_CREDITOS")
+                        return
+
+                    send_text(phone, "Foto da porta recebida.")
+                    sheets_manager.save_image_url_whatsapp(phone, "foto_porta_url", path)
+                    sheets_manager.update_state_whatsapp(phone, "GERANDO")
+                    send_text(phone, "Gerando a simulacao. Aguarde alguns instantes.")
+                    _run_generation_whatsapp(phone, user, path, sheets_manager)
+                    return
+
+                if estado == "AGUARDANDO_FEEDBACK":
                     send_text(
                         phone,
-                        "Escolha uma opcao:\n\n"
+                        "Voce esta no menu de opcoes.\n\n"
                         "1. Gerar novamente\n"
                         "2. Simular outro ambiente\n"
                         "3. Encerrar atendimento",
                     )
-                return
-
-            send_text(phone, "Por favor, envie uma imagem para continuarmos.")
-            return
-
-        if msg_type == "image":
-            image_info = message.get("image", {})
-            media_id = image_info.get("id")
-            if not media_id:
-                send_text(phone, "Nao consegui processar a imagem. Tente novamente.")
-                return
-
-            path = download_media(media_id)
-            if not path:
-                send_text(phone, "Erro ao baixar a imagem. Envie novamente.")
-                return
-
-            if estado in ("AGUARDANDO_AMBIENTE", "NOVO"):
-                send_text(phone, "Foto do ambiente recebida.")
-                sheets_manager.save_image_url_whatsapp(phone, "foto_ambiente_url", path)
-                sheets_manager.update_state_whatsapp(phone, "AGUARDANDO_PORTA")
-                send_text(phone, "Agora envie a foto do modelo de porta que voce deseja experimentar.")
-                return
-
-            if estado == "AGUARDANDO_PORTA":
-                if creditos <= 0:
-                    send_text(phone, "Voce usou todas as suas simulacoes.")
-                    sheets_manager.update_state_whatsapp(phone, "SEM_CREDITOS")
                     return
 
-                send_text(phone, "Foto da porta recebida.")
-                sheets_manager.save_image_url_whatsapp(phone, "foto_porta_url", path)
-                sheets_manager.update_state_whatsapp(phone, "GERANDO")
-                send_text(phone, "Gerando a simulacao. Aguarde alguns instantes.")
-                _run_generation_whatsapp(phone, user, path, sheets_manager)
-                return
-
-            if estado == "AGUARDANDO_FEEDBACK":
-                send_text(
-                    phone,
-                    "Voce esta no menu de opcoes.\n\n"
-                    "1. Gerar novamente\n"
-                    "2. Simular outro ambiente\n"
-                    "3. Encerrar atendimento",
-                )
-                return
-
-        send_text(phone, "Por enquanto, eu so processo imagens. Envie a foto do ambiente ou da porta.")
+            send_text(phone, "Por enquanto, eu so processo imagens. Envie a foto do ambiente ou da porta.")
     except Exception as exc:
         logger.error("Erro ao processar webhook WhatsApp: %s", exc, exc_info=True)
-
 
 def _run_generation_whatsapp(phone: str, user: dict, porta_path: str, sheets_manager):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bot"))

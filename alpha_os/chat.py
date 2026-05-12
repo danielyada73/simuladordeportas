@@ -828,7 +828,7 @@ class AlphaOSChat:
         for candidate in ("Daniel", "Jefferson", "Gustavo"):
             if re.search(rf"\b{re.escape(candidate)}\b", text, flags=re.IGNORECASE):
                 return candidate
-        if re.search(r"\bminhas?\b|\bmeu\b|\bminha\b", text, flags=re.IGNORECASE):
+        if re.search(r"\bminhas?\b|\bmeu\b|\bminha\b|\bmim\b|\bpra mim\b|\bpara mim\b", text, flags=re.IGNORECASE):
             return self._known_assignee_for_phone(phone)
         return self._known_assignee_for_phone(phone)
 
