@@ -2,8 +2,10 @@ import os
 import re
 import time
 import unicodedata
+import json
+from datetime import date, timedelta
 from difflib import SequenceMatcher
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -16,8 +18,18 @@ from .campaign_ops import (
     publish_meta,
     readiness_text,
 )
-from .llm import complete_text
-from .monday_client import board_items_with_latest_updates, find_client_boards, latest_update_text, list_client_groups
+from .llm import complete_json, complete_text
+from .monday_client import (
+    board_items_with_latest_updates,
+    find_client_boards,
+    find_tasks,
+    latest_update_text,
+    list_all_tasks,
+    list_client_groups,
+    overdue_tasks,
+    tasks_for_window,
+    weekly_tasks,
+)
 from .store import AlphaOSStore, normalize_client
 
 
@@ -81,6 +93,45 @@ FOLLOWUP_HINTS = (
     "e as campanhas",
 )
 
+TODAY_HINTS = (
+    "tarefas de hoje",
+    "minhas tarefas de hoje",
+    "meu dia",
+    "relatorio do dia",
+    "relatorio de hoje",
+    "relatório do dia",
+    "relatório de hoje",
+    "o que tenho hoje",
+    "o que eu tenho hoje",
+    "agenda de hoje",
+    "me passe as tarefas de hoje",
+)
+
+OVERDUE_HINTS = (
+    "atrasadas",
+    "atrasados",
+    "vencidas",
+    "pendentes atrasadas",
+    "o que esta atrasado",
+    "o que está atrasado",
+)
+
+TOMORROW_HINTS = (
+    "amanha",
+    "amanhã",
+    "tarefas de amanha",
+    "tarefas de amanhã",
+)
+
+WEEK_HINTS = (
+    "essa semana",
+    "proximos dias",
+    "próximos dias",
+    "proxima semana",
+    "próxima semana",
+    "semana",
+)
+
 LIST_QUESTION_HINTS = (
     "esses sao todos os clientes",
     "esses são todos os clientes",
@@ -135,7 +186,15 @@ def _help_text() -> str:
         [
             "Alpha OS pronto para operar.",
             "",
-            "Voce pode falar comigo assim:",
+            "Voce pode falar comigo de forma natural ou por comando.",
+            "",
+            "Exemplos naturais:",
+            "- quais sao minhas tarefas de hoje?",
+            "- o que esta atrasado para o Daniel?",
+            "- me fale sobre a tarefa CRIAR COPY DA PAGINA da Nabla Engenharia",
+            "- acabei de fazer a tarefa CRIAR RESUMO DO CLIENTE da Impéra Imobiliária",
+            "",
+            "Comandos diretos:",
             "novo cliente Nome do Cliente",
             "Briefing completo na linha seguinte ou em arquivo .txt",
             "",
@@ -294,6 +353,75 @@ def _truncate_text(text: str, limit: int = 2500) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3].rstrip() + "..."
+
+
+def _digits_only(value: str) -> str:
+    return re.sub(r"\D+", "", str(value or ""))
+
+
+def _parse_phone_owner_map() -> Dict[str, str]:
+    raw = os.getenv("ALPHA_OS_WHATSAPP_ASSIGNEES_JSON", "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return {}
+    result: Dict[str, str] = {}
+    if not isinstance(payload, dict):
+        return result
+    for phone, owner in payload.items():
+        digits = _digits_only(str(phone))
+        owner_name = str(owner or "").strip()
+        if digits and owner_name:
+            result[digits] = owner_name
+    return result
+
+
+def _format_task_rows(title: str, rows: List[Dict[str, Any]], limit: int = 25) -> str:
+    lines = [title, ""]
+    if not rows:
+        lines.append("Nenhuma tarefa encontrada.")
+        return "\n".join(lines)
+
+    for task in rows[:limit]:
+        due = task.get("due_date") or "-"
+        status = task.get("status") or "-"
+        assignees = task.get("assignees_text") or "-"
+        lines.append(
+            f"- {task.get('client_name')} | {task.get('item_name')}\n"
+            f"  Data: {due} | Status: {status} | Responsavel: {assignees}\n"
+            f"  Board: {task.get('board_name')}"
+        )
+    if len(rows) > limit:
+        lines.append("")
+        lines.append(f"Mostrei {limit} de {len(rows)} tarefas.")
+    return "\n".join(lines)
+
+
+def _task_context(task: Dict[str, Any]) -> str:
+    lines = [
+        f"Cliente: {task.get('client_name')}",
+        f"Board: {task.get('board_name')}",
+        f"Grupo: {task.get('group_name')}",
+        f"Tarefa: {task.get('item_name')}",
+        f"Status: {task.get('status') or '-'}",
+        f"Data: {task.get('due_date') or '-'}",
+        f"Responsaveis: {task.get('assignees_text') or '-'}",
+        f"Prioridade: {task.get('priority') or '-'}",
+    ]
+    columns = task.get("columns") or {}
+    if isinstance(columns, dict):
+        for title, value in columns.items():
+            if not value:
+                continue
+            lines.append(f"{title}: {value}")
+    latest_update = (task.get("latest_update") or "").strip()
+    if latest_update:
+        lines.append("")
+        lines.append("Ultimo update:")
+        lines.append(latest_update)
+    return "\n".join(lines)
 
 
 def _monday_candidate_item_names(platform: str) -> Tuple[str, ...]:
@@ -687,6 +815,170 @@ class AlphaOSChat:
 
         return self.handle_pending_briefing_text(phone, raw, "texto")
 
+    def _known_assignee_for_phone(self, phone: str) -> str:
+        phone_digits = _digits_only(phone)
+        owners = _parse_phone_owner_map()
+        if phone_digits and phone_digits in owners:
+            return owners[phone_digits]
+        default_owner = os.getenv("ALPHA_OS_DEFAULT_ASSIGNEE", "").strip()
+        return default_owner
+
+    def _extract_assignee_name(self, raw: str, phone: str) -> str:
+        text = str(raw or "")
+        for candidate in ("Daniel", "Jefferson", "Gustavo"):
+            if re.search(rf"\b{re.escape(candidate)}\b", text, flags=re.IGNORECASE):
+                return candidate
+        if re.search(r"\bminhas?\b|\bmeu\b|\bminha\b", text, flags=re.IGNORECASE):
+            return self._known_assignee_for_phone(phone)
+        return self._known_assignee_for_phone(phone)
+
+    def _classify_natural_request(self, phone: str, raw: str) -> Dict[str, Any]:
+        question = (raw or "").strip()
+        question_norm = _norm_cmp(question)
+        assignee_name = self._extract_assignee_name(question, phone)
+
+        if any(hint in question_norm for hint in TODAY_HINTS):
+            return {"intent": "report_today", "assignee_name": assignee_name}
+        if any(hint in question_norm for hint in OVERDUE_HINTS):
+            return {"intent": "report_overdue", "assignee_name": assignee_name}
+        if any(hint in question_norm for hint in TOMORROW_HINTS):
+            return {"intent": "report_tomorrow", "assignee_name": assignee_name}
+        if "semana" in question_norm and any(hint in question_norm for hint in WEEK_HINTS):
+            return {"intent": "report_week", "assignee_name": assignee_name}
+
+        if re.search(r"\bacabei de fazer\b|\bmarc[ae]\b|\bmuda\b|\baltere\b|\bconclu[ií]\b|\bfeito\b|\bconclu[ií]do\b", question_norm, flags=re.IGNORECASE):
+            status_label = "Feito"
+            if "em progresso" in question_norm:
+                status_label = "Em progresso"
+            elif "bloquead" in question_norm:
+                status_label = "Bloqueado"
+            try:
+                client = self._resolve_client_from_text(phone, question)
+            except Exception:
+                client = None
+            task_guess = question
+            for prefix in (
+                "acabei de fazer a tarefa",
+                "acabei de fazer",
+                "muda o status da tarefa",
+                "mude o status da tarefa",
+                "marque a tarefa",
+                "marcar a tarefa",
+                "altere a tarefa",
+            ):
+                task_guess = re.sub(prefix, "", task_guess, flags=re.IGNORECASE).strip(" .:-")
+            return {
+                "intent": "task_update_status",
+                "assignee_name": assignee_name,
+                "client_id": client.get("id") if client else "",
+                "client_name": client.get("name") if client else "",
+                "task_name": task_guess,
+                "status_label": status_label,
+            }
+
+        try:
+            parsed = complete_json(
+                f"""
+Hoje e {date.today().isoformat()}.
+Voce classifica uma mensagem de WhatsApp sobre tarefas da Monday.
+Responda apenas JSON valido com as chaves:
+intent, client_name, task_name, assignee_name, status_label.
+
+Intent pode ser:
+- report_today
+- report_overdue
+- report_tomorrow
+- report_week
+- task_update_status
+- client_query
+- task_query
+- unknown
+
+Regras:
+- nao invente cliente nem tarefa
+- se a pessoa disser "minhas tarefas", use assignee_name vazio
+- se nao houver tarefa especifica, task_name vazio
+- se nao houver cliente especifico, client_name vazio
+- se a frase implicar concluir algo, use status_label "Feito"
+
+Mensagem:
+{question}
+"""
+            )
+            if isinstance(parsed, dict):
+                parsed.setdefault("assignee_name", assignee_name)
+                if not parsed.get("assignee_name"):
+                    parsed["assignee_name"] = assignee_name
+                return parsed
+        except Exception:
+            pass
+
+        return {"intent": "client_query", "assignee_name": assignee_name}
+
+    def _handle_report_request(self, intent: str, assignee_name: str) -> str:
+        today = date.today()
+        if intent == "report_today":
+            rows = tasks_for_window(today, today, assignee_name=assignee_name, include_done=False)
+            owner = assignee_name or "todos"
+            return _format_task_rows(f"Tarefas de hoje - {owner}", rows)
+        if intent == "report_overdue":
+            rows = overdue_tasks(today, assignee_name=assignee_name, include_done=False)
+            owner = assignee_name or "todos"
+            return _format_task_rows(f"Tarefas atrasadas - {owner}", rows)
+        if intent == "report_tomorrow":
+            tomorrow = today + timedelta(days=1)
+            rows = tasks_for_window(tomorrow, tomorrow, assignee_name=assignee_name, include_done=False)
+            owner = assignee_name or "todos"
+            return _format_task_rows(f"Tarefas de amanha - {owner}", rows)
+        if intent == "report_week":
+            rows = weekly_tasks(today, assignee_name=assignee_name, include_done=False)
+            owner = assignee_name or "todos"
+            return _format_task_rows(f"Proximas tarefas da semana - {owner}", rows)
+        return "Nao consegui montar esse relatorio."
+
+    def _handle_task_status_update(self, phone: str, parsed: Dict[str, Any], raw: str) -> str:
+        client = None
+        client_name = str(parsed.get("client_name") or "").strip()
+        client_id = str(parsed.get("client_id") or "").strip()
+        if client_id:
+            client = self.store.get_client(client_id)
+        if not client and client_name:
+            client = self._resolve_client(phone, client_name, allow_last=False)
+        if not client:
+            client = self._resolve_client_from_text(phone, raw)
+        task_name = str(parsed.get("task_name") or "").strip()
+        if not task_name:
+            return "Preciso do nome da tarefa para mudar o status."
+
+        matches = find_tasks(
+            task_name,
+            client_name=(client or {}).get("name", ""),
+            assignee_name=str(parsed.get("assignee_name") or "").strip(),
+            include_done=True,
+            limit=5,
+        )
+        if not matches:
+            return "Nao encontrei essa tarefa na Monday."
+        if len(matches) > 1 and matches[0].get("_score", 0) < 0.9:
+            return _format_task_rows("Encontrei mais de uma tarefa parecida. Seja mais especifico:", matches, limit=5)
+
+        target = matches[0]
+        status_label = str(parsed.get("status_label") or "Feito").strip() or "Feito"
+        board_id = str(target.get("board_id") or "").strip()
+        item_id = str(target.get("item_id") or "").strip()
+        if not board_id or not item_id:
+            return "Encontrei a tarefa, mas faltou board_id ou item_id para atualizar o status."
+        try:
+            _set_monday_status(board_id, item_id, status_label)
+        except Exception as exc:
+            return f"Falha ao atualizar status na Monday: {exc}"
+        return (
+            f"Status atualizado.\n\n"
+            f"Cliente: {target.get('client_name')}\n"
+            f"Tarefa: {target.get('item_name')}\n"
+            f"Novo status: {status_label}"
+        )
+
     def handle(self, phone: str, text: str) -> str:
         raw = (text or "").strip()
         t = _norm(raw)
@@ -697,11 +989,12 @@ class AlphaOSChat:
         if t in ("oi", "ola", "olá", "bom dia", "boa tarde", "boa noite"):
             return (
                 "Oi. Estou online.\n\n"
-                "Posso responder sobre clientes da Monday.\n"
+                "Posso responder sobre clientes e tarefas da Monday.\n"
                 "Exemplos:\n"
+                "- quais sao minhas tarefas de hoje?\n"
+                "- o que esta atrasado para o Daniel?\n"
                 "- mostrar google Sette Arquitetura\n"
-                "- o que foi criado para Clinica da Coluna?\n"
-                "- qual a copy da LP do cliente X?"
+                "- me fale sobre a tarefa CRIAR COPY DA PAGINA da Nabla Engenharia"
             )
 
         if t in ("config", "infra", "setup"):
@@ -896,6 +1189,13 @@ class AlphaOSChat:
             if not client:
                 return "Nao encontrei esse cliente. Use 'clientes' para listar."
             return self._validate_client(client)
+
+        parsed = self._classify_natural_request(phone, raw)
+        natural_intent = str(parsed.get("intent") or "").strip().lower()
+        if natural_intent in ("report_today", "report_overdue", "report_tomorrow", "report_week"):
+            return self._handle_report_request(natural_intent, str(parsed.get("assignee_name") or "").strip())
+        if natural_intent == "task_update_status":
+            return self._handle_task_status_update(phone, parsed, raw)
 
         try:
             return self._answer_general_question(phone, raw)
@@ -1111,6 +1411,7 @@ class AlphaOSChat:
 
     def _answer_general_question(self, phone: str, question: str) -> str:
         question_norm = _norm_cmp(question)
+        parsed = self._classify_natural_request(phone, question)
 
         if any(hint in question_norm for hint in LIST_QUESTION_HINTS):
             clients = self._list_clients_view()
@@ -1119,24 +1420,92 @@ class AlphaOSChat:
             names = ", ".join(client.get("client_name", "") for client in clients[:60])
             return f"Hoje eu encontrei {len(clients)} clientes na Monday.\n\n{names}"
 
+        if str(parsed.get("intent") or "").strip().lower() in ("report_today", "report_overdue", "report_tomorrow", "report_week"):
+            return self._handle_report_request(str(parsed.get("intent") or "").strip().lower(), str(parsed.get("assignee_name") or "").strip())
+
         client = self._resolve_client_from_text(phone, question)
         if not client and any(hint in question_norm for hint in FOLLOWUP_HINTS):
             last_client_id = self._get_last_client_id(phone)
             if last_client_id:
                 client = self._find_client_in_view(last_client_id) or self.store.get_client(last_client_id)
+
+        client_name = (client or {}).get("name", "") or str(parsed.get("client_name") or "").strip()
+        task_name = str(parsed.get("task_name") or "").strip()
+        if not task_name and ("tarefa" in question_norm or "item" in question_norm):
+            task_name = question
+
+        if "google" in question_norm and client:
+            self._remember_client(phone, client.get("id"))
+            return self._show_platform_text(client, "google")
+        if "meta" in question_norm and client:
+            self._remember_client(phone, client.get("id"))
+            return self._show_platform_text(client, "meta")
+
+        task_matches: List[Dict[str, Any]] = []
+        if task_name:
+            task_matches = find_tasks(task_name, client_name=client_name, include_done=True, limit=5)
+        elif client_name and ("tarefa" in question_norm or "status" in question_norm or "update" in question_norm):
+            task_matches = find_tasks(question, client_name=client_name, include_done=True, limit=5)
+
+        if task_matches:
+            task = task_matches[0]
+            if len(task_matches) > 1 and task.get("_score", 0) < 0.9:
+                return _format_task_rows("Encontrei mais de uma tarefa parecida. Seja mais especifico:", task_matches, limit=5)
+            context = _task_context(task)
+            try:
+                answer = complete_text(
+                    f"""
+Voce e o Alpha OS da agencia Alpha Marketing Digital.
+Responda em portugues do Brasil, de forma objetiva.
+Use apenas o contexto abaixo da Monday.
+Se a informacao nao estiver no contexto, diga isso explicitamente.
+
+Pergunta:
+{question}
+
+Contexto da tarefa:
+{context}
+"""
+                )
+                return _truncate_text(answer, 3000)
+            except Exception:
+                return _truncate_text(context, 3000)
+
         if not client:
+            all_tasks = list_all_tasks()
+            if all_tasks:
+                try:
+                    compact = []
+                    for task in all_tasks[:120]:
+                        compact.append(
+                            f"{task.get('client_name')} | {task.get('item_name')} | {task.get('status') or '-'} | "
+                            f"{task.get('due_date') or '-'} | {task.get('assignees_text') or '-'}"
+                        )
+                    answer = complete_text(
+                        f"""
+Voce e o Alpha OS da agencia Alpha Marketing Digital.
+Responda em portugues do Brasil e seja objetivo.
+Use apenas a lista resumida de tarefas abaixo.
+Se nao houver base suficiente, diga que precisa do nome do cliente ou da tarefa.
+
+Pergunta:
+{question}
+
+Tarefas conhecidas:
+{chr(10).join(compact)}
+"""
+                    )
+                    return _truncate_text(answer, 3000)
+                except Exception:
+                    pass
             return (
-                "Consigo responder sobre clientes da Monday, mas preciso do nome do cliente na pergunta ou de um contexto anterior.\n"
-                "Exemplo: mostrar google Sette Arquitetura\n"
-                "Ou: o que foi criado para Clinica da Coluna?"
+                "Preciso do nome do cliente ou de uma tarefa mais especifica para responder com seguranca.\n"
+                "Exemplos:\n"
+                "- me fale sobre a tarefa CRIAR COPY DA PAGINA da Nabla Engenharia\n"
+                "- quais sao minhas tarefas de hoje?"
             )
 
         self._remember_client(phone, client.get("id"))
-
-        if "google" in question_norm:
-            return self._show_platform_text(client, "google")
-        if "meta" in question_norm:
-            return self._show_platform_text(client, "meta")
 
         context = self._monday_context_for_client(client)
         if not context.strip():

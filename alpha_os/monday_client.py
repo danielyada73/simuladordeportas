@@ -3,6 +3,8 @@ import os
 import re
 import time
 import unicodedata
+import json
+from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
@@ -67,6 +69,8 @@ ITEM_MARKERS = {
 _BOARDS_CACHE: Optional[List[Dict[str, str]]] = None
 _BOARDS_CACHE_AT = 0.0
 _ITEMS_CACHE: Dict[str, Dict[str, Any]] = {}
+_TASKS_CACHE: Optional[List[Dict[str, Any]]] = None
+_TASKS_CACHE_AT = 0.0
 
 
 def monday_token() -> str:
@@ -142,6 +146,77 @@ def _strip_html(value: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _parse_json(value: str) -> Dict[str, Any]:
+    raw = str(value or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _parse_iso_date(value: str) -> Optional[date]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(raw[: len(fmt)], fmt).date()
+        except Exception:
+            continue
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", raw)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        except Exception:
+            return None
+    return None
+
+
+def _extract_column_date(column: Dict[str, Any]) -> Optional[date]:
+    text = str(column.get("text") or "").strip()
+    if text:
+        parsed = _parse_iso_date(text)
+        if parsed:
+            return parsed
+    value = _parse_json(column.get("value") or "")
+    for key in ("date", "from", "to"):
+        parsed = _parse_iso_date(str(value.get(key) or ""))
+        if parsed:
+            return parsed
+    return None
+
+
+def _split_people(text: str) -> List[str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    parts = re.split(r",|/|;|\n| e ", raw, flags=re.IGNORECASE)
+    people = []
+    for part in parts:
+        value = part.strip()
+        if value and value not in people:
+            people.append(value)
+    return people
+
+
+def _is_done_status(status_text: str) -> bool:
+    status_norm = _norm(status_text)
+    return status_norm in {
+        "feito",
+        "concluido",
+        "concluida",
+        "done",
+        "complete",
+        "completed",
+        "finalizado",
+        "finalizada",
+        "ok",
+    }
 
 
 def list_boards(limit: int = 500) -> List[Dict[str, str]]:
@@ -301,6 +376,246 @@ def board_items_with_latest_updates(board_id: str, limit: int = 200) -> List[Dic
 
     _ITEMS_CACHE[cache_key] = {"at": now, "rows": rows}
     return rows
+
+
+def board_items_full(board_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+    board_id = str(board_id or "").strip()
+    if not board_id:
+        return []
+
+    cache_key = f"board_full:{board_id}:{int(limit)}"
+    now = time.time()
+    cached = _ITEMS_CACHE.get(cache_key)
+    if cached and now - cached["at"] < CACHE_TTL_SECONDS:
+        return cached["rows"]
+
+    data = graphql(
+        f"""
+        query {{
+          boards(ids: [{board_id}]) {{
+            id
+            name
+            items_page(limit: {int(limit)}) {{
+              items {{
+                id
+                name
+                group {{
+                  id
+                  title
+                }}
+                column_values {{
+                  id
+                  text
+                  type
+                  value
+                  column {{
+                    title
+                  }}
+                }}
+                updates(limit: 1) {{
+                  text_body
+                  body
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+    )
+    boards = data.get("boards") or []
+    if not boards:
+        return []
+
+    board = boards[0]
+    board_name = str(board.get("name") or "")
+    items = ((board.get("items_page") or {}).get("items")) or []
+    rows: List[Dict[str, Any]] = []
+    for item in items:
+        updates = item.get("updates") or []
+        latest = updates[0] if updates else {}
+        columns = []
+        for column in item.get("column_values") or []:
+            columns.append(
+                {
+                    "id": str(column.get("id") or ""),
+                    "title": str((column.get("column") or {}).get("title") or ""),
+                    "type": str(column.get("type") or ""),
+                    "text": str(column.get("text") or ""),
+                    "value": str(column.get("value") or ""),
+                }
+            )
+        rows.append(
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or ""),
+                "board_id": board_id,
+                "board_name": board_name,
+                "group_id": str((item.get("group") or {}).get("id") or ""),
+                "group_name": str((item.get("group") or {}).get("title") or ""),
+                "latest_update": _strip_html(str(latest.get("text_body") or latest.get("body") or "").strip()),
+                "columns": columns,
+            }
+        )
+
+    _ITEMS_CACHE[cache_key] = {"at": now, "rows": rows}
+    return rows
+
+
+def list_all_tasks(limit_per_board: int = 200) -> List[Dict[str, Any]]:
+    global _TASKS_CACHE, _TASKS_CACHE_AT
+    now = time.time()
+    if _TASKS_CACHE is not None and now - _TASKS_CACHE_AT < CACHE_TTL_SECONDS:
+        return _TASKS_CACHE
+
+    tasks: List[Dict[str, Any]] = []
+    for entry in list_client_groups(limit=500):
+        client_name = str(entry.get("client_name") or "")
+        boards = entry.get("boards") or {}
+        for board_type, board in boards.items():
+            board_id = str((board or {}).get("id") or "").strip()
+            if not board_id:
+                continue
+            for item in board_items_full(board_id, limit=limit_per_board):
+                status_text = ""
+                due_date = None
+                people: List[str] = []
+                priority_text = ""
+                columns_by_title: Dict[str, str] = {}
+                status_column_id = ""
+
+                for column in item.get("columns") or []:
+                    title = str(column.get("title") or "")
+                    title_norm = _norm(title)
+                    text = str(column.get("text") or "").strip()
+                    col_type = str(column.get("type") or "").strip().lower()
+                    if title:
+                        columns_by_title[title] = text
+
+                    if not due_date and col_type in ("date", "timeline"):
+                        due_date = _extract_column_date(column)
+                    if not status_text and (title_norm == "status" or col_type in ("color", "status")) and text:
+                        status_text = text
+                        status_column_id = str(column.get("id") or "")
+                    if not priority_text and title_norm == "prioridade" and text:
+                        priority_text = text
+                    if col_type in ("multiple-person", "people", "person", "team") and text:
+                        people.extend(_split_people(text))
+
+                dedup_people: List[str] = []
+                for person in people:
+                    if person not in dedup_people:
+                        dedup_people.append(person)
+
+                tasks.append(
+                    {
+                        "client_name": client_name,
+                        "board_type": board_type,
+                        "board_id": item.get("board_id"),
+                        "board_name": item.get("board_name"),
+                        "group_id": item.get("group_id"),
+                        "group_name": item.get("group_name"),
+                        "item_id": item.get("id"),
+                        "item_name": item.get("name"),
+                        "status": status_text,
+                        "status_column_id": status_column_id,
+                        "priority": priority_text,
+                        "due_date": due_date.isoformat() if due_date else "",
+                        "assignees": dedup_people,
+                        "assignees_text": ", ".join(dedup_people),
+                        "latest_update": item.get("latest_update") or "",
+                        "columns": columns_by_title,
+                    }
+                )
+
+    _TASKS_CACHE = tasks
+    _TASKS_CACHE_AT = now
+    return tasks
+
+
+def find_tasks(
+    search_text: str,
+    client_name: str = "",
+    assignee_name: str = "",
+    include_done: bool = True,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    query = _norm(search_text)
+    client_query = _norm(client_name)
+    assignee_query = _norm(assignee_name)
+    matches: List[Dict[str, Any]] = []
+
+    for task in list_all_tasks():
+        if client_query and client_query not in _norm(task.get("client_name")):
+            continue
+        if assignee_query and assignee_query not in _norm(task.get("assignees_text")):
+            continue
+        if not include_done and _is_done_status(task.get("status") or ""):
+            continue
+
+        haystacks = [
+            task.get("item_name") or "",
+            task.get("board_name") or "",
+            task.get("group_name") or "",
+            task.get("latest_update") or "",
+        ]
+        score = 0.0
+        for hay in haystacks:
+            score = max(score, _match_score(query, hay))
+            if query and (_norm(query) in _norm(hay) or _norm(hay) in _norm(query)):
+                score = max(score, 0.94)
+        if client_query and client_query == _norm(task.get("client_name") or ""):
+            score += 0.03
+        if score >= 0.72:
+            enriched = dict(task)
+            enriched["_score"] = score
+            matches.append(enriched)
+
+    matches.sort(key=lambda item: item.get("_score", 0.0), reverse=True)
+    return matches[:limit]
+
+
+def tasks_for_window(
+    start_date: date,
+    end_date: date,
+    assignee_name: str = "",
+    include_done: bool = False,
+) -> List[Dict[str, Any]]:
+    assignee_query = _norm(assignee_name)
+    rows: List[Dict[str, Any]] = []
+    for task in list_all_tasks():
+        due = _parse_iso_date(task.get("due_date") or "")
+        if not due or due < start_date or due > end_date:
+            continue
+        if assignee_query and assignee_query not in _norm(task.get("assignees_text")):
+            continue
+        if not include_done and _is_done_status(task.get("status") or ""):
+            continue
+        rows.append(task)
+    rows.sort(key=lambda item: (item.get("due_date") or "", _norm(item.get("client_name") or ""), _norm(item.get("item_name") or "")))
+    return rows
+
+
+def overdue_tasks(reference_date: Optional[date] = None, assignee_name: str = "", include_done: bool = False) -> List[Dict[str, Any]]:
+    today = reference_date or date.today()
+    assignee_query = _norm(assignee_name)
+    rows: List[Dict[str, Any]] = []
+    for task in list_all_tasks():
+        due = _parse_iso_date(task.get("due_date") or "")
+        if not due or due >= today:
+            continue
+        if assignee_query and assignee_query not in _norm(task.get("assignees_text")):
+            continue
+        if not include_done and _is_done_status(task.get("status") or ""):
+            continue
+        rows.append(task)
+    rows.sort(key=lambda item: (item.get("due_date") or "", _norm(item.get("client_name") or ""), _norm(item.get("item_name") or "")))
+    return rows
+
+
+def weekly_tasks(reference_date: Optional[date] = None, assignee_name: str = "", include_done: bool = False) -> List[Dict[str, Any]]:
+    today = reference_date or date.today()
+    end = today + timedelta(days=7)
+    return tasks_for_window(today, end, assignee_name=assignee_name, include_done=include_done)
 
 
 def latest_update_text(item_id: str) -> str:
