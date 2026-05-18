@@ -1,0 +1,34 @@
+name: Monday Sync
+
+# Dispara POST /api/sync a cada 5 min pra manter o cache do painel atualizado.
+# Tambem mantem o Render Free acordado (ele dorme depois de 15 min sem requisicao).
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}  # botao "Run workflow" no GitHub Actions
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Trigger Alpha OS sync
+        env:
+          SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
+          API_URL: ${{ secrets.API_URL }}
+        run: |
+          set -e
+          if [ -z "$SYNC_SECRET" ] || [ -z "$API_URL" ]; then
+            echo "Faltam secrets SYNC_SECRET e/ou API_URL."
+            exit 1
+          fi
+          response=$(curl -s -o body.txt -w "%{http_code}" -X POST \
+            --max-time 150 \
+            -H "Authorization: Bearer $SYNC_SECRET" \
+            "$API_URL/api/sync")
+          cat body.txt
+          echo ""
+          echo "HTTP $response"
+          if [ "$response" != "200" ]; then
+            exit 1
+          fi
