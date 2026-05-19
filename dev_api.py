@@ -22,6 +22,7 @@ except ImportError:
     pass
 
 from alpha_os.dashboard_api import router as dashboard_router
+from alpha_os.missions_api import router as missions_router
 
 app = FastAPI(title="Alpha OS Dashboard — Local Dev")
 
@@ -33,6 +34,7 @@ app.add_middleware(
 )
 
 app.include_router(dashboard_router)
+app.include_router(missions_router)
 
 
 @app.get("/")

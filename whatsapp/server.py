@@ -34,6 +34,13 @@ try:
 except Exception as exc:
     logger.error("Falha ao registrar dashboard_api: %s", exc, exc_info=True)
 
+# Missions endpoints (/api/missions, /api/mission-users, /api/mission-settings).
+try:
+    from alpha_os.missions_api import router as missions_router
+    app.include_router(missions_router)
+except Exception as exc:
+    logger.error("Falha ao registrar missions_api: %s", exc, exc_info=True)
+
 try:
     sheets = SheetsManager()
 except Exception as exc:

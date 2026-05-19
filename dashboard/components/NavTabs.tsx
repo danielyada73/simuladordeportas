@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Users, Building2 } from "lucide-react";
+import { Activity, Users, Building2, Crosshair } from "lucide-react";
 
 const TABS = [
   { href: "/", label: "Demandas", icon: Activity },
   { href: "/responsaveis", label: "Responsáveis", icon: Users },
   { href: "/clientes", label: "Clientes", icon: Building2 },
+  { href: "/missoes", label: "Missões", icon: Crosshair },
 ];
 
 export function NavTabs() {
@@ -16,7 +17,7 @@ export function NavTabs() {
     <nav className="flex gap-1 bg-surface border border-border rounded-xl p-1">
       {TABS.map((t) => {
         const Icon = t.icon;
-        const active = pathname === t.href;
+        const active = pathname === t.href || (t.href === "/missoes" && pathname?.startsWith("/missoes"));
         return (
           <Link
             key={t.href}
