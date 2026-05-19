@@ -3,23 +3,20 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { Plus, Settings as SettingsIcon, ChevronLeft, Calendar, CalendarClock, AlarmClock, CalendarDays, CalendarRange, List } from "lucide-react";
+import { Plus, Settings as SettingsIcon, ChevronLeft, Search } from "lucide-react";
 import { CreateMissionDialog } from "./CreateMissionDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import type { MissionUser, MissionSettings } from "@/lib/missions-types";
 
-type Props = {
-  users: MissionUser[];
-  settings: MissionSettings;
-};
+type Props = { users: MissionUser[]; settings: MissionSettings };
 
 const WINDOWS = [
-  { key: "today", label: "Hoje", icon: Calendar },
-  { key: "tomorrow", label: "Amanhã", icon: CalendarClock },
-  { key: "overdue", label: "Atrasadas", icon: AlarmClock },
-  { key: "week", label: "Semana", icon: CalendarDays },
-  { key: "month", label: "Mês", icon: CalendarRange },
-  { key: "all", label: "Tudo", icon: List },
+  { key: "today", label: "Hoje" },
+  { key: "tomorrow", label: "Amanhã" },
+  { key: "overdue", label: "Atrasadas" },
+  { key: "week", label: "Semana" },
+  { key: "month", label: "Mês" },
+  { key: "all", label: "Tudo" },
 ];
 
 export function MissoesHeader({ users, settings }: Props) {
@@ -50,88 +47,82 @@ export function MissoesHeader({ users, settings }: Props) {
 
   return (
     <>
-      <header className="sticky top-0 z-30 border-b border-camo-line/60 backdrop-blur-md bg-camo-deep/80">
-        <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center gap-4 justify-between">
-          {/* Left: back + Criar Missão */}
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-30 border-b border-white/[0.06] backdrop-blur-xl bg-[#0a0d14]/85">
+        <div className="max-w-[1500px] mx-auto px-6 h-16 flex items-center gap-4 justify-between">
+          {/* Left */}
+          <div className="flex items-center gap-4">
             <Link
               href="/"
-              className="flex items-center gap-1 text-xs uppercase tracking-[0.2em] text-camo-cyan/80 hover:text-camo-cyan transition-colors"
+              className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white transition-colors"
             >
-              <ChevronLeft className="w-3.5 h-3.5" />
+              <ChevronLeft className="w-4 h-4" />
               Painel
             </Link>
+            <div className="w-px h-6 bg-white/10" />
             <button
               onClick={() => setShowCreate(true)}
-              className="ml-3 flex items-center gap-2 px-4 py-2 bg-camo-cyan text-camo-deep font-stencil tracking-widest text-base rounded-sm shadow-tactical hover:brightness-110 transition-all"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-accent to-[#ff7c3f] text-white font-medium text-sm rounded-xl shadow-lg shadow-accent/25 hover:shadow-accent/40 hover:brightness-110 transition-all"
             >
-              <Plus className="w-4 h-4" strokeWidth={3} />
-              CRIAR MISSÃO
+              <Plus className="w-4 h-4" strokeWidth={2.5} />
+              Nova missão
             </button>
           </div>
 
-          {/* Center: date filter */}
+          {/* Center: filter */}
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <div className="flex bg-camo-base/80 border border-camo-line rounded-sm p-1">
+            <div className="flex bg-white/[0.04] border border-white/[0.08] rounded-xl p-1">
               {WINDOWS.map((w) => {
-                const Icon = w.icon;
                 const active = current === w.key;
                 return (
                   <button
                     key={w.key}
                     onClick={() => setWindow(w.key)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 text-xs uppercase tracking-wider transition-colors ${
+                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
                       active
-                        ? "bg-camo-cyan text-camo-deep font-semibold"
-                        : "text-camo-cyan/70 hover:text-camo-cyan"
+                        ? "bg-white/10 text-white shadow-inner"
+                        : "text-white/50 hover:text-white"
                     }`}
                   >
-                    <Icon className="w-3 h-3" />
                     {w.label}
                   </button>
                 );
               })}
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5 text-xs">
               <input
                 type="date"
                 defaultValue={params.get("custom_from") || ""}
                 onChange={(e) => setCustomRange(e.target.value, params.get("custom_to") || "")}
-                className="bg-camo-base border border-camo-line rounded-sm px-2 py-1 text-xs text-camo-cyan focus:outline-none focus:border-camo-cyan"
+                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-white/80 focus:outline-none focus:border-accent/60"
               />
-              <span className="text-camo-cyan/40 text-xs">→</span>
+              <span className="text-white/30">→</span>
               <input
                 type="date"
                 defaultValue={params.get("custom_to") || ""}
                 onChange={(e) => setCustomRange(params.get("custom_from") || "", e.target.value)}
-                className="bg-camo-base border border-camo-line rounded-sm px-2 py-1 text-xs text-camo-cyan focus:outline-none focus:border-camo-cyan"
+                className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-white/80 focus:outline-none focus:border-accent/60"
               />
             </div>
           </div>
 
-          {/* Right: logo + settings */}
+          {/* Right */}
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowSettings(true)}
-              className="p-2 text-camo-cyan/60 hover:text-camo-cyan transition-colors rounded-sm hover:bg-camo-mid/40"
+              className="p-2 text-white/50 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
               title="Configurações"
             >
-              <SettingsIcon className="w-5 h-5" />
+              <SettingsIcon className="w-4.5 h-4.5" />
             </button>
-            <div className="flex items-center gap-2">
-              {settings.logo_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={settings.logo_url}
-                  alt="Logo"
-                  className="h-9 w-auto object-contain"
-                />
-              ) : (
-                <div className="font-stencil text-2xl tracking-wider text-camo-cyan">
-                  ALPHA<span className="text-camo-amber">·</span>OS
-                </div>
-              )}
-            </div>
+            {settings.logo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={settings.logo_url} alt="Logo" className="h-8 w-auto object-contain" />
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-[#ff7c3f] flex items-center justify-center font-bold text-white text-sm">α</div>
+                <span className="font-semibold text-white text-sm">Alpha OS</span>
+              </div>
+            )}
           </div>
         </div>
       </header>

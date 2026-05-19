@@ -13,8 +13,13 @@ import {
   Target,
   Crosshair,
   Trophy,
-  History,
+  CheckCircle2,
+  Loader2,
+  Circle,
+  Flame,
+  AlertTriangle,
   TriangleAlert,
+  ArrowUpRight,
 } from "lucide-react";
 
 type SP = Promise<{ window?: string; custom_from?: string; custom_to?: string }>;
@@ -49,85 +54,95 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
   const secundarias = missions.filter((m) => m.kind === "secundaria" && m.status !== "concluida");
   const concluidas = missions.filter((m) => m.status === "concluida");
 
-  const now = new Date();
-  const opCode = `OPS-${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}Z`;
-
   return (
     <>
       <MissoesHeader users={users} settings={settings} />
 
-      <main className="max-w-[1500px] mx-auto px-6 py-8 space-y-10">
-        {/* Classified stripe */}
-        <ClassifiedStripe opCode={opCode} window={windowKey} />
-
+      <main className="max-w-[1500px] mx-auto px-6 py-10 space-y-8">
         {/* HERO */}
-        <section className="relative py-8">
-          <CornerBrackets />
-          <div className="relative text-center">
-            <div className="inline-flex items-center gap-3 text-camo-amber text-[10px] tracking-[0.5em] uppercase mb-3">
-              <span className="w-8 h-px bg-camo-amber/60" />
-              Comando Central · Alpha
-              <span className="w-8 h-px bg-camo-amber/60" />
+        <section className="flex items-start justify-between gap-6 flex-wrap">
+          <div>
+            <div className="text-xs uppercase tracking-[0.2em] text-white/40 mb-2">
+              Comando central · {windowLabel(windowKey)}
             </div>
-            <h1 className="font-stencil tracking-[0.18em] text-camo-cyan text-7xl md:text-8xl lg:text-[8rem] leading-[0.85] relative">
-              MISSÕES
-              <span className="block text-camo-amber/95 text-5xl md:text-6xl lg:text-7xl mt-2 tracking-[0.22em]">
-                DIÁRIAS
-              </span>
+            <h1 className="font-stencil text-6xl md:text-7xl tracking-[0.04em] leading-none text-white">
+              MISSÕES <span className="text-accent">DIÁRIAS</span>
             </h1>
-            <div className="mt-6 flex items-center justify-center gap-6 text-[10px] uppercase tracking-[0.3em] text-camo-cyan/50 font-mono">
-              <span>// {windowLabel(windowKey)}</span>
-              <span className="w-1 h-1 bg-camo-cyan/40 rounded-full" />
-              <span>// {opCode}</span>
-              <span className="w-1 h-1 bg-camo-cyan/40 rounded-full" />
-              <span>// {stats?.total ?? 0} ALVOS</span>
-            </div>
+            <p className="text-white/50 text-sm mt-3 max-w-md">
+              Painel paralelo ao Monday — tarefas avulsas, status e progresso da equipe em tempo real.
+            </p>
           </div>
         </section>
 
         {error && <ErrorBox message={error} />}
 
+        {/* KPI TILES */}
+        {stats && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <KpiTile
+              icon={Target}
+              label="Total no escopo"
+              value={stats.total}
+              accent="from-accent/30 to-accent/5"
+              iconBg="bg-accent/15 text-accent"
+            />
+            <KpiTile
+              icon={CheckCircle2}
+              label="Concluídas"
+              value={stats.by_status.concluida}
+              accent="from-low/30 to-low/5"
+              iconBg="bg-low/15 text-low"
+              hint={stats.total > 0 ? `${Math.round((stats.by_status.concluida / stats.total) * 100)}% do escopo` : undefined}
+            />
+            <KpiTile
+              icon={Loader2}
+              label="Em curso"
+              value={stats.by_status.em_progresso}
+              accent="from-camo-amber/30 to-camo-amber/5"
+              iconBg="bg-camo-amber/15 text-camo-amber"
+            />
+            <KpiTile
+              icon={Circle}
+              label="Abertas"
+              value={stats.by_status.nao_iniciada}
+              accent="from-camo-cyan/30 to-camo-cyan/5"
+              iconBg="bg-camo-cyan/15 text-camo-cyan"
+            />
+          </div>
+        )}
+
         {/* PAINEL GERAL */}
         {stats && (
-          <Section title="Painel Geral" subtitle="Distribuição operacional" code="01">
-            <div className="grid lg:grid-cols-[280px_1fr] gap-8 items-start">
-              {/* Pizza com anéis tipo radar */}
-              <div className="flex flex-col items-center">
-                <div className="relative">
-                  <RadarRings size={260} />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <PieChart
-                      size={200}
-                      centerLabel="Total"
-                      slices={[
-                        { label: "Concluídas", value: stats.by_status.concluida, color: "#10b981" },
-                        { label: "Em curso", value: stats.by_status.em_progresso, color: "#fbbf24" },
-                        { label: "Abertas", value: stats.by_status.nao_iniciada, color: "#22d3ee" },
-                      ]}
-                    />
-                  </div>
-                </div>
-                <div className="mt-5 grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-widest w-full">
+          <Card>
+            <CardHeader title="Painel geral" subtitle="Distribuição da operação" />
+            <div className="grid lg:grid-cols-[280px_1fr] gap-8 items-start p-6">
+              <div className="flex flex-col items-center gap-5">
+                <PieChart
+                  size={220}
+                  centerLabel="Total"
+                  slices={[
+                    { label: "Concluídas", value: stats.by_status.concluida, color: "#10b981" },
+                    { label: "Em curso", value: stats.by_status.em_progresso, color: "#fbbf24" },
+                    { label: "Abertas", value: stats.by_status.nao_iniciada, color: "#22d3ee" },
+                  ]}
+                />
+                <div className="flex flex-col gap-2 w-full">
                   <Legend color="#10b981" label="Concluídas" value={stats.by_status.concluida} />
                   <Legend color="#fbbf24" label="Em curso" value={stats.by_status.em_progresso} />
                   <Legend color="#22d3ee" label="Abertas" value={stats.by_status.nao_iniciada} />
                 </div>
               </div>
 
-              {/* Lado direito: tipos + responsáveis */}
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
-                  <KindStat icon={Target} label="Missões Principais" value={stats.by_kind.principal} />
+                  <KindStat icon={Target} label="Missões principais" value={stats.by_kind.principal} />
                   <KindStat icon={Crosshair} label="Secundárias" value={stats.by_kind.secundaria} />
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase tracking-[0.3em] text-camo-cyan/50 mb-2 flex items-center gap-2">
-                    <span className="w-4 h-px bg-camo-cyan/40" />
-                    Operadores em campo
-                  </div>
-                  <div className="space-y-2.5">
+                  <div className="text-xs uppercase tracking-wider text-white/40 mb-3">Por responsável</div>
+                  <div className="space-y-2">
                     {stats.by_responsible.length === 0 ? (
-                      <div className="text-camo-cyan/40 text-sm font-mono">// nenhum operador alocado</div>
+                      <div className="text-white/30 text-sm">Nenhum operador alocado</div>
                     ) : (
                       stats.by_responsible.map((r) => (
                         <ResponsibleRow key={r.slug} stat={r} user={userBySlug.get(r.slug)} />
@@ -137,13 +152,14 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
                 </div>
               </div>
             </div>
-          </Section>
+          </Card>
         )}
 
         {/* MISSÕES PRINCIPAIS */}
-        <Section title="Missões Principais" subtitle="Alvos prioritários" code="02" stamp="ATIVAS">
+        <section className="space-y-4">
+          <SectionHeader title="Missões principais" subtitle="Alvos prioritários" icon={Target} count={principais.length} />
           {principais.length === 0 ? (
-            <EmptyPanel message="Nenhuma missão principal ativa" />
+            <EmptyPanel message="Nenhuma missão principal nessa janela" />
           ) : (
             <div className="grid lg:grid-cols-2 gap-5">
               {groupByResponsible(principais, users).map(({ user, items }) => (
@@ -151,23 +167,25 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
               ))}
             </div>
           )}
-        </Section>
+        </section>
 
         {/* SECUNDÁRIAS */}
-        <Section title="Missões Secundárias" subtitle="Apoio operacional" code="03">
+        <section className="space-y-4">
+          <SectionHeader title="Missões secundárias" subtitle="Apoio operacional" icon={Crosshair} count={secundarias.length} />
           {secundarias.length === 0 ? (
             <EmptyPanel message="Nada secundário no momento" />
           ) : (
-            <div className="grid lg:grid-cols-2 gap-x-5 gap-y-2">
+            <div className="grid lg:grid-cols-2 gap-x-5 gap-y-2.5">
               {secundarias.map((m) => (
                 <MissionCard key={m.id} mission={m} compact />
               ))}
             </div>
           )}
-        </Section>
+        </section>
 
         {/* CONCLUÍDAS */}
-        <Section title="Missões Cumpridas" subtitle="Confirmadas" code="04" icon={Trophy} stamp="CONCLUÍDAS">
+        <section className="space-y-4">
+          <SectionHeader title="Missões cumpridas" subtitle="Histórico do escopo" icon={Trophy} count={concluidas.length} />
           {concluidas.length === 0 ? (
             <EmptyPanel message="Nenhuma missão cumprida ainda" />
           ) : (
@@ -177,142 +195,135 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
               ))}
             </div>
           )}
-        </Section>
+        </section>
 
         {/* HISTÓRICO */}
-        {stats && <HistoryFooter stats={stats} users={users} />}
+        {stats && stats.by_responsible.length > 0 && (
+          <Card>
+            <CardHeader title="Performance da equipe" subtitle="Taxas de conclusão na janela atual" />
+            <div className="p-6 grid md:grid-cols-3 gap-4">
+              {stats.by_responsible.map((r) => {
+                const u = userBySlug.get(r.slug);
+                const rate = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
+                return <PerformanceCard key={r.slug} stat={r} user={u} rate={rate} />;
+              })}
+            </div>
+          </Card>
+        )}
       </main>
     </>
   );
 }
 
-// ============================================================ Sub-componentes
+// ============================================================ Componentes
 
-function ClassifiedStripe({ opCode, window }: { opCode: string; window: string }) {
+function Card({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 text-[10px] font-mono uppercase tracking-[0.25em] text-camo-amber/80 border-y border-camo-amber/30 py-1.5">
-      <div className="flex items-center gap-2">
-        <span className="inline-block w-2 h-2 bg-camo-amber/80 animate-pulse" />
-        <span>// CLASSIFIED — ALPHA TEAM EYES ONLY</span>
+    <div className="relative rounded-2xl border border-white/[0.06] bg-white/[0.02] overflow-hidden backdrop-blur-sm">
+      {children}
+    </div>
+  );
+}
+
+function CardHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
+      <div>
+        <h3 className="text-base font-semibold text-white">{title}</h3>
+        {subtitle && <p className="text-xs text-white/40 mt-0.5">{subtitle}</p>}
       </div>
-      <div className="hidden md:flex items-center gap-4 text-camo-cyan/60">
-        <span>{opCode}</span>
-        <span>// {window.toUpperCase()}</span>
+      {action}
+    </div>
+  );
+}
+
+function SectionHeader({
+  title,
+  subtitle,
+  icon: Icon,
+  count,
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: any;
+  count?: number;
+}) {
+  return (
+    <div className="flex items-end justify-between gap-3">
+      <div className="flex items-center gap-3">
+        {Icon && (
+          <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
+            <Icon className="w-4.5 h-4.5 text-white/70" />
+          </div>
+        )}
+        <div>
+          <h2 className="text-xl font-semibold text-white leading-none">{title}</h2>
+          {subtitle && <p className="text-xs text-white/40 mt-1">{subtitle}</p>}
+        </div>
+        {typeof count === "number" && (
+          <span className="ml-1 inline-flex items-center justify-center min-w-[28px] h-7 px-2 rounded-lg bg-white/[0.06] text-white/70 text-xs font-semibold numeric">
+            {count}
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-function CornerBrackets() {
-  return (
-    <>
-      <div className="absolute top-2 left-2 w-8 h-8 border-t-2 border-l-2 border-camo-cyan/40" />
-      <div className="absolute top-2 right-2 w-8 h-8 border-t-2 border-r-2 border-camo-cyan/40" />
-      <div className="absolute bottom-2 left-2 w-8 h-8 border-b-2 border-l-2 border-camo-cyan/40" />
-      <div className="absolute bottom-2 right-2 w-8 h-8 border-b-2 border-r-2 border-camo-cyan/40" />
-    </>
-  );
-}
-
-function RadarRings({ size }: { size: number }) {
-  const cx = size / 2;
-  const cy = size / 2;
-  return (
-    <svg width={size} height={size} className="absolute inset-0">
-      <g fill="none" stroke="#22d3ee" strokeOpacity="0.18">
-        <circle cx={cx} cy={cy} r={size / 2 - 4} strokeDasharray="2 6" />
-        <circle cx={cx} cy={cy} r={size / 2 - 18} strokeDasharray="1 4" strokeOpacity="0.12" />
-        <line x1={cx} y1={6} x2={cx} y2={size - 6} strokeOpacity="0.08" />
-        <line x1={6} y1={cy} x2={size - 6} y2={cy} strokeOpacity="0.08" />
-      </g>
-      {/* Marcadores cardeais */}
-      <g fill="#22d3ee" opacity="0.4" fontSize="9" fontFamily="JetBrains Mono, monospace">
-        <text x={cx} y={14} textAnchor="middle">N</text>
-        <text x={cx} y={size - 4} textAnchor="middle">S</text>
-        <text x={6} y={cy + 4} textAnchor="start">W</text>
-        <text x={size - 6} y={cy + 4} textAnchor="end">E</text>
-      </g>
-    </svg>
-  );
-}
-
-function Section({
-  title,
-  subtitle,
-  code,
+function KpiTile({
   icon: Icon,
-  stamp,
-  children,
+  label,
+  value,
+  hint,
+  accent,
+  iconBg,
 }: {
-  title: string;
-  subtitle?: string;
-  code?: string;
-  icon?: any;
-  stamp?: string;
-  children: React.ReactNode;
+  icon: any;
+  label: string;
+  value: number;
+  hint?: string;
+  accent: string;
+  iconBg: string;
 }) {
   return (
-    <section className="relative">
-      {/* Header da seção */}
-      <div className="flex items-end justify-between border-b border-camo-line pb-3 mb-5">
-        <div className="flex items-end gap-4">
-          {code && (
-            <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-camo-cyan/40 mb-1">
-              ▸ SEÇÃO {code}
-            </div>
-          )}
-          <div>
-            <div className="flex items-center gap-2.5">
-              {Icon && <Icon className="w-5 h-5 text-camo-cyan" />}
-              <h2 className="font-stencil text-3xl md:text-4xl tracking-[0.15em] text-camo-cyan leading-none">
-                {title.toUpperCase()}
-              </h2>
-            </div>
-            {subtitle && (
-              <div className="text-[10px] uppercase tracking-[0.25em] text-camo-cyan/40 mt-1.5 font-mono">
-                // {subtitle.toLowerCase()}
-              </div>
-            )}
-          </div>
+    <div className={`relative rounded-2xl border border-white/[0.06] bg-gradient-to-br ${accent} overflow-hidden group hover:border-white/10 transition-colors`}>
+      <div className="absolute -top-8 -right-8 w-24 h-24 rounded-full opacity-30 blur-2xl bg-white/40" />
+      <div className="relative p-5 flex items-center gap-4">
+        <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${iconBg}`}>
+          <Icon className="w-5 h-5" />
         </div>
-        {stamp && (
-          <div className="hidden md:flex items-center gap-2 px-2.5 py-1 border border-camo-amber/50 text-camo-amber text-[9px] font-stencil tracking-[0.3em] -rotate-2">
-            <span className="w-1.5 h-1.5 bg-camo-amber rounded-full animate-pulse" />
-            {stamp}
-          </div>
-        )}
+        <div className="flex-1 min-w-0">
+          <div className="text-xs uppercase tracking-wider text-white/50">{label}</div>
+          <div className="font-stencil text-4xl text-white leading-none mt-1">{value}</div>
+          {hint && <div className="text-[11px] text-white/40 mt-1.5">{hint}</div>}
+        </div>
       </div>
-      {children}
-    </section>
+    </div>
   );
 }
 
 function PrincipalColumn({ user, missions }: { user: MissionUser; missions: Mission[] }) {
   return (
-    <div className="relative border border-camo-line bg-camo-base/30 backdrop-blur-sm">
-      <CornerBrackets />
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-camo-line bg-camo-mid/20">
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06] bg-white/[0.02]">
         {user.photo_url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={user.photo_url} alt={user.display_name} className="w-11 h-11 rounded-full object-cover border-2 border-camo-cyan/50" />
+          <img
+            src={user.photo_url}
+            alt={user.display_name}
+            className="w-11 h-11 rounded-full object-cover ring-2 ring-accent/40"
+          />
         ) : (
-          <div className="w-11 h-11 rounded-full bg-camo-mid border-2 border-camo-cyan/50 flex items-center justify-center font-stencil text-camo-cyan text-xl">
+          <div className="w-11 h-11 rounded-full bg-gradient-to-br from-accent/40 to-accent/10 ring-2 ring-accent/40 flex items-center justify-center font-bold text-white">
             {user.display_name[0]}
           </div>
         )}
         <div className="flex-1">
-          <div className="font-stencil text-xl tracking-[0.15em] text-camo-cyan leading-none">
-            {user.display_name.toUpperCase()}
-          </div>
-          <div className="text-[10px] uppercase tracking-[0.25em] text-camo-cyan/50 mt-1 font-mono">
-            // {missions.length} alvos ativos
-          </div>
+          <div className="font-semibold text-white">{user.display_name}</div>
+          <div className="text-xs text-white/40 mt-0.5">{missions.length} missões ativas</div>
         </div>
         <div className="text-right">
-          <div className="font-stencil text-4xl text-camo-cyan/80 leading-none">
-            {String(missions.length).padStart(2, "0")}
-          </div>
-          <div className="text-[9px] uppercase tracking-[0.3em] text-camo-cyan/40 mt-0.5">UNITS</div>
+          <div className="font-stencil text-3xl text-white/90 leading-none">{String(missions.length).padStart(2, "0")}</div>
         </div>
       </div>
       <div className="p-3 space-y-2.5">
@@ -326,30 +337,28 @@ function ResponsibleRow({ stat, user }: { stat: ResponsibleStat; user?: MissionU
   const pct = stat.total > 0 ? Math.round((stat.done / stat.total) * 100) : 0;
   const name = user?.display_name || stat.slug;
   return (
-    <div className="flex items-center gap-3 border border-camo-line bg-camo-deep/50 px-3 py-2.5 hover:border-camo-cyan/40 transition-colors">
+    <div className="flex items-center gap-3 rounded-xl border border-white/[0.05] bg-white/[0.02] px-3.5 py-2.5 hover:bg-white/[0.04] transition-colors">
       {user?.photo_url ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={user.photo_url} alt={name} className="w-10 h-10 rounded-full object-cover border-2 border-camo-cyan/50" />
+        <img src={user.photo_url} alt={name} className="w-9 h-9 rounded-full object-cover ring-2 ring-white/10" />
       ) : (
-        <div className="w-10 h-10 rounded-full bg-camo-mid border-2 border-camo-cyan/50 flex items-center justify-center font-stencil text-camo-cyan">
+        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-accent/40 to-accent/10 ring-2 ring-white/10 flex items-center justify-center font-bold text-white text-sm">
           {name[0]}
         </div>
       )}
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline justify-between gap-3">
-          <div className="font-stencil text-base md:text-lg tracking-[0.15em] text-camo-cyan">
-            {name.toUpperCase()}
-          </div>
-          <div className="text-xs text-camo-cyan/60 font-mono numeric">{pct}%</div>
+          <div className="font-medium text-white text-sm">{name}</div>
+          <div className="text-xs text-white/60 numeric">{pct}%</div>
         </div>
-        <div className="h-[2px] bg-camo-line mt-1 overflow-hidden">
-          <div className="h-full bg-gradient-to-r from-camo-cyan to-camo-amber" style={{ width: `${pct}%` }} />
+        <div className="h-1 bg-white/5 rounded-full mt-1.5 overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-accent to-camo-amber rounded-full" style={{ width: `${pct}%` }} />
         </div>
-        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-[10px] uppercase tracking-wider font-mono">
-          <Stat label="tot" value={stat.total} />
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-[11px]">
+          <Stat label="total" value={stat.total} />
           <Stat label="curso" value={stat.in_progress} tone="text-camo-amber" />
           <Stat label="feita" value={stat.done} tone="text-low" />
-          <span className="text-camo-line">·</span>
+          <span className="text-white/15">·</span>
           <Stat label="alta" value={stat.alta} tone="text-urgent" />
           <Stat label="méd" value={stat.media} />
           <Stat label="baixa" value={stat.baixa} />
@@ -359,10 +368,10 @@ function ResponsibleRow({ stat, user }: { stat: ResponsibleStat; user?: MissionU
   );
 }
 
-function Stat({ label, value, tone = "text-camo-cyan" }: { label: string; value: number; tone?: string }) {
+function Stat({ label, value, tone = "text-white/70" }: { label: string; value: number; tone?: string }) {
   return (
     <span className="flex gap-1">
-      <span className="text-camo-cyan/40">{label}</span>
+      <span className="text-white/30">{label}</span>
       <span className={`numeric font-semibold ${tone}`}>{value}</span>
     </span>
   );
@@ -370,17 +379,14 @@ function Stat({ label, value, tone = "text-camo-cyan" }: { label: string; value:
 
 function KindStat({ icon: Icon, label, value }: { icon: any; label: string; value: number }) {
   return (
-    <div className="relative border border-camo-line bg-camo-deep/50 p-4">
-      <div className="absolute top-1.5 right-1.5 text-[9px] font-mono tracking-wider text-camo-cyan/30">
-        {label.startsWith("Mis") ? "PRI" : "SEC"}
-      </div>
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
       <div className="flex items-center gap-3">
-        <div className="p-2 bg-camo-mid/40 border border-camo-line">
-          <Icon className="w-5 h-5 text-camo-cyan" />
+        <div className="w-10 h-10 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
+          <Icon className="w-4.5 h-4.5 text-white/70" />
         </div>
         <div>
-          <div className="font-stencil text-3xl text-camo-cyan leading-none">{value}</div>
-          <div className="text-[10px] uppercase tracking-[0.25em] text-camo-cyan/50 mt-1">{label}</div>
+          <div className="font-stencil text-3xl text-white leading-none">{value}</div>
+          <div className="text-xs text-white/40 mt-1">{label}</div>
         </div>
       </div>
     </div>
@@ -389,29 +395,29 @@ function KindStat({ icon: Icon, label, value }: { icon: any; label: string; valu
 
 function Legend({ color, label, value }: { color: string; label: string; value: number }) {
   return (
-    <div className="flex items-center justify-between gap-2 px-2 py-1 border border-camo-line bg-camo-deep/40">
+    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.05]">
       <div className="flex items-center gap-2">
-        <span className="inline-block w-2 h-2" style={{ background: color, boxShadow: `0 0 8px ${color}80` }} />
-        <span className="text-camo-cyan/70">{label}</span>
+        <span
+          className="inline-block w-2.5 h-2.5 rounded-full"
+          style={{ background: color, boxShadow: `0 0 10px ${color}80` }}
+        />
+        <span className="text-white/70 text-xs">{label}</span>
       </div>
-      <span className="numeric text-text font-semibold">{value}</span>
+      <span className="numeric font-semibold text-white text-sm">{value}</span>
     </div>
   );
 }
 
 function CompletedRow({ mission, user }: { mission: Mission; user?: MissionUser }) {
   return (
-    <div className="relative flex items-center gap-3 border border-low/30 bg-low/[0.06] px-3 py-2.5">
-      <div className="absolute top-0 left-0 h-full w-0.5 bg-low" />
-      <div className="w-7 h-7 rounded-full bg-low/20 border border-low/40 flex items-center justify-center shrink-0">
-        <svg viewBox="0 0 24 24" className="w-4 h-4 text-low" fill="none" stroke="currentColor" strokeWidth="3">
-          <path d="M5 13l4 4L19 7" />
-        </svg>
+    <div className="flex items-center gap-3 rounded-xl border border-low/15 bg-low/[0.04] px-3.5 py-3 hover:bg-low/[0.08] transition-colors">
+      <div className="w-8 h-8 rounded-full bg-low/15 flex items-center justify-center shrink-0">
+        <CheckCircle2 className="w-4 h-4 text-low" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-text/80 truncate line-through">{mission.name}</div>
-        <div className="text-[10px] uppercase tracking-[0.2em] text-camo-cyan/40 font-mono">
-          // {user?.display_name || mission.responsible_slug}
+        <div className="text-sm font-medium text-white/85 truncate line-through">{mission.name}</div>
+        <div className="text-xs text-white/40 truncate mt-0.5">
+          {user?.display_name || mission.responsible_slug}
           {mission.client ? ` · ${mission.client}` : ""}
         </div>
       </div>
@@ -419,79 +425,60 @@ function CompletedRow({ mission, user }: { mission: Mission; user?: MissionUser 
   );
 }
 
-function HistoryFooter({ stats, users }: { stats: MissionsStats; users: MissionUser[] }) {
-  const userBySlug = new Map(users.map((u) => [u.slug, u]));
+function PerformanceCard({ stat, user, rate }: { stat: ResponsibleStat; user?: MissionUser; rate: number }) {
+  const name = user?.display_name || stat.slug;
   return (
-    <Section title="Histórico" subtitle="Performance no escopo" code="05" icon={History}>
-      <div className="grid md:grid-cols-3 gap-4">
-        {stats.by_responsible.length === 0 ? (
-          <div className="col-span-full text-camo-cyan/40 text-sm font-mono">// sem registros</div>
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5 space-y-4">
+      <div className="flex items-center gap-3">
+        {user?.photo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={user.photo_url} alt={name} className="w-12 h-12 rounded-full object-cover ring-2 ring-white/10" />
         ) : (
-          stats.by_responsible.map((r) => {
-            const u = userBySlug.get(r.slug);
-            const rate = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
-            return (
-              <div key={r.slug} className="relative border border-camo-line bg-camo-deep/50 p-4 space-y-3">
-                <CornerBrackets />
-                <div className="flex items-center gap-3">
-                  {u?.photo_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={u.photo_url} alt={u.display_name} className="w-10 h-10 rounded-full object-cover border border-camo-cyan/40" />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-camo-mid border border-camo-cyan/40 flex items-center justify-center font-stencil text-camo-cyan">
-                      {(u?.display_name || r.slug)[0]}
-                    </div>
-                  )}
-                  <div className="flex-1">
-                    <div className="font-stencil text-lg tracking-[0.15em] text-camo-cyan leading-none">
-                      {(u?.display_name || r.slug).toUpperCase()}
-                    </div>
-                    <div className="text-[10px] uppercase tracking-[0.25em] text-camo-cyan/50 mt-1 font-mono">
-                      // taxa {rate}%
-                    </div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-4 gap-1.5">
-                  <Mini label="tot" value={r.total} />
-                  <Mini label="ok" value={r.done} tone="text-low" />
-                  <Mini label="curso" value={r.in_progress} tone="text-camo-amber" />
-                  <Mini label="alta" value={r.alta} tone="text-urgent" />
-                </div>
-              </div>
-            );
-          })
+          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-accent/40 to-accent/10 ring-2 ring-white/10 flex items-center justify-center font-bold text-white">
+            {name[0]}
+          </div>
         )}
+        <div className="flex-1">
+          <div className="font-semibold text-white">{name}</div>
+          <div className="text-xs text-white/40 mt-0.5">Taxa de conclusão</div>
+        </div>
+        <div className="text-right">
+          <div className="font-stencil text-3xl text-white leading-none">{rate}%</div>
+        </div>
       </div>
-    </Section>
+      <div className="grid grid-cols-4 gap-2 text-center">
+        <MiniStat label="Total" value={stat.total} />
+        <MiniStat label="OK" value={stat.done} tone="text-low" />
+        <MiniStat label="Curso" value={stat.in_progress} tone="text-camo-amber" />
+        <MiniStat label="Alta" value={stat.alta} tone="text-urgent" />
+      </div>
+    </div>
   );
 }
 
-function Mini({ label, value, tone = "text-camo-cyan" }: { label: string; value: number; tone?: string }) {
+function MiniStat({ label, value, tone = "text-white" }: { label: string; value: number; tone?: string }) {
   return (
-    <div className="border border-camo-line/60 bg-camo-base/40 px-2 py-1.5 text-center">
+    <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] py-2">
       <div className={`font-stencil text-xl leading-none ${tone}`}>{value}</div>
-      <div className="text-[9px] uppercase tracking-[0.25em] text-camo-cyan/40 mt-1 font-mono">{label}</div>
+      <div className="text-[10px] uppercase tracking-wider text-white/40 mt-1">{label}</div>
     </div>
   );
 }
 
 function EmptyPanel({ message }: { message: string }) {
   return (
-    <div className="relative border border-dashed border-camo-line/60 bg-camo-deep/20 py-10 text-center">
-      <CornerBrackets />
-      <div className="font-stencil text-base tracking-[0.3em] text-camo-cyan/40">
-        // {message.toUpperCase()}
-      </div>
+    <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.015] py-12 text-center">
+      <div className="text-white/40 text-sm">{message}</div>
     </div>
   );
 }
 
 function ErrorBox({ message }: { message: string }) {
   return (
-    <div className="border border-urgent/40 bg-urgent/10 px-4 py-3 text-urgent flex items-start gap-3">
+    <div className="rounded-2xl border border-urgent/30 bg-urgent/10 px-4 py-3 text-urgent flex items-start gap-3">
       <TriangleAlert className="w-5 h-5 mt-0.5 shrink-0" />
       <div>
-        <div className="font-stencil tracking-[0.15em] text-lg">FALHA DE CONEXÃO</div>
+        <div className="font-semibold">Falha ao carregar missões</div>
         <div className="text-xs mt-1 text-urgent/80 font-mono">{message}</div>
       </div>
     </div>
@@ -505,7 +492,7 @@ function groupByResponsible(missions: Mission[], users: MissionUser[]): { user: 
       slug: m.responsible_slug,
       display_name: m.responsible_slug,
       photo_url: null,
-      accent_color: "#22d3ee",
+      accent_color: "#ff5a1f",
       is_active: true,
       sort_order: 99,
     };
@@ -518,13 +505,13 @@ function groupByResponsible(missions: Mission[], users: MissionUser[]): { user: 
 
 function windowLabel(w: string): string {
   const m: Record<string, string> = {
-    today: "hoje",
-    tomorrow: "amanhã",
-    overdue: "atrasadas",
-    week: "próximos 7 dias",
-    month: "próximos 30 dias",
-    all: "todas",
-    custom: "intervalo customizado",
+    today: "Hoje",
+    tomorrow: "Amanhã",
+    overdue: "Atrasadas",
+    week: "Próximos 7 dias",
+    month: "Próximos 30 dias",
+    all: "Todas",
+    custom: "Período customizado",
   };
-  return (m[w] || w).toUpperCase();
+  return m[w] || w;
 }
