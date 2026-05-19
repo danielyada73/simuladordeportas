@@ -118,6 +118,57 @@ create table if not exists monday_snapshot (
 create index if not exists monday_snapshot_kind_idx on monday_snapshot (kind);
 
 -- ============================================================
+-- 7. Aba "Missoes" — sistema independente de Monday
+-- Tarefas avulsas que a equipe cadastra/marca no painel.
+-- Funciona 100% no Supabase.
+-- ============================================================
+
+create table if not exists mission_users (
+  slug text primary key,            -- 'daniel', 'jefferson', 'gustavo'
+  display_name text not null,
+  photo_url text,
+  accent_color text default '#3b82f6',
+  is_active boolean default true,
+  sort_order int default 0,
+  created_at timestamptz default now()
+);
+
+insert into mission_users (slug, display_name, sort_order) values
+  ('daniel', 'Daniel', 1),
+  ('jefferson', 'Jefferson', 2),
+  ('gustavo', 'Gustavo', 3)
+on conflict (slug) do nothing;
+
+create table if not exists missions (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  client text,
+  responsible_slug text not null references mission_users(slug),
+  priority text not null default 'media' check (priority in ('alta','media','baixa')),
+  kind text not null default 'principal' check (kind in ('principal','secundaria')),
+  due_date date not null,
+  status text not null default 'nao_iniciada' check (status in ('nao_iniciada','em_progresso','concluida')),
+  notes text,
+  created_by_slug text,
+  created_at timestamptz default now(),
+  completed_at timestamptz,
+  updated_at timestamptz default now()
+);
+
+create index if not exists missions_due_idx on missions (due_date);
+create index if not exists missions_status_idx on missions (status);
+create index if not exists missions_responsible_idx on missions (responsible_slug);
+
+create table if not exists mission_settings (
+  id text primary key default 'singleton',
+  logo_url text,
+  client_options jsonb default '[]'::jsonb,
+  updated_at timestamptz default now()
+);
+
+insert into mission_settings (id) values ('singleton') on conflict do nothing;
+
+-- ============================================================
 -- RLS (Row Level Security) — manter desligado por enquanto
 -- A API do backend usa service_role key (bypassa RLS).
 -- Vamos ligar quando expor leitura direta pro frontend do cliente.
