@@ -28,9 +28,9 @@ html, body {
 
 /* Card with subtle gradient depth */
 .card {
-  background: linear-gradient(180deg, #15171c 0%, #0f1014 100%);
-  border: 1px solid #1f2128;
-  border-radius: 12px;
+  background: linear-gradient(180deg, #141518 0%, #0d0e11 100%);
+  border: 1px solid #27292f;
+  border-radius: 28px;
 }
 
 .card-hover {
@@ -55,4 +55,8 @@ html, body {
 /* Input dark styling */
 input[type="date"], input[type="password"], input[type="text"] {
   color-scheme: dark;
+}
+
+.font-stencil {
+  letter-spacing: 0.035em;
 }
