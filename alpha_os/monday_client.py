@@ -100,20 +100,48 @@ def graphql(query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str,
     return data.get("data") or {}
 
 
+# Marcadores tipicos de mojibake UTF-8-lido-como-latin1
+_MOJIBAKE_MARKERS = (
+    "Ã§", "Ã£", "Ã©", "Ã¡", "Ã³", "Ãµ", "Ã­",
+    "ÃÂ", "Â ", "â€", "ï¿½",
+    "Ã§", "Ã£", "Ã©",
+)
+
+
+def _fix_mojibake(value: str) -> str:
+    """
+    Desfaz mojibake UTF-8 lido como Latin-1.
+    Ex: 'Criaã§ã£o' -> 'Criação'
+    Aplica so se detectar marcadores tipicos.
+    """
+    if not value or not any(m in value for m in _MOJIBAKE_MARKERS):
+        return value
+    try:
+        return value.encode("latin-1", errors="strict").decode("utf-8", errors="strict")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        # tenta com cp1252 (Windows variant) que cobre mais bytes
+        try:
+            return value.encode("cp1252", errors="strict").decode("utf-8", errors="strict")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return value
+
+
 def _clean_text(value: Any) -> str:
     """
     Sanitiza string vinda do Monday/Supabase:
+    - desfaz mojibake (UTF-8 lido como Latin-1)
+    - remove surrogates invalidos
     - normaliza Unicode pra NFC
-    - remove surrogates invalidos (causa de mojibake \\u00c3\\udc81 -> 'A')
-    - mantem todos os acentos legitimos
     """
     if value is None:
         return ""
     if not isinstance(value, str):
         value = str(value)
-    # remove surrogates invalidos e re-encoda limpo
+    # 1. tenta desfazer mojibake se detectado
+    value = _fix_mojibake(value)
+    # 2. remove surrogates invalidos
     value = value.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
-    # normaliza pra NFC (composed form, mais comum)
+    # 3. normaliza
     return unicodedata.normalize("NFC", value)
 
 
@@ -296,7 +324,7 @@ def _detect_board_type(board_name: str) -> Optional[str]:
 
 
 def _extract_client_name(board_name: str, board_type: Optional[str]) -> Optional[str]:
-    name = str(board_name or "").strip()
+    name = _clean_text(board_name or "").strip()
     if not board_type:
         return None
 
@@ -312,6 +340,12 @@ def _extract_client_name(board_name: str, board_type: Optional[str]) -> Optional
         for pattern in patterns:
             cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
 
+    # remove numeracao residual do POP (ex: "- 3.", "3 -", "1.", " 5 ", "- 4. ")
+    cleaned = re.sub(r"\s*[-|:/>]+\s*\d+\.?\s*$", "", cleaned).strip()
+    cleaned = re.sub(r"^\s*\d+\.?\s*[-|:/>]+\s*", "", cleaned).strip()
+    cleaned = re.sub(r"\s+\d+\.?\s*$", "", cleaned).strip()
+    cleaned = re.sub(r"^\s*\d+\.?\s+", "", cleaned).strip()
+    # tira separadores residuais
     cleaned = re.sub(r"^\s*[-|:/>]+\s*", "", cleaned).strip()
     cleaned = re.sub(r"\s*[-|:/>]+\s*$", "", cleaned).strip()
     return cleaned or None
