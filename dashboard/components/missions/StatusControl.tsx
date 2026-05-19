@@ -7,10 +7,10 @@ import type { MissionStatus } from "@/lib/missions-types";
 
 type Props = { id: string; status: MissionStatus };
 
-const STATUSES: { key: MissionStatus; label: string; icon: any; color: string }[] = [
-  { key: "nao_iniciada", label: "ABERTA", icon: Circle, color: "text-camo-cyan/60 hover:text-camo-cyan" },
-  { key: "em_progresso", label: "EM CURSO", icon: Loader, color: "text-camo-amber" },
-  { key: "concluida", label: "CONCLUÍDA", icon: Check, color: "text-low" },
+const STATUSES: { key: MissionStatus; label: string; icon: any; activeCls: string }[] = [
+  { key: "nao_iniciada", label: "Aberta", icon: Circle, activeCls: "bg-white/10 text-white" },
+  { key: "em_progresso", label: "Em curso", icon: Loader, activeCls: "bg-camo-amber/20 text-camo-amber" },
+  { key: "concluida", label: "Concluída", icon: Check, activeCls: "bg-low/20 text-low" },
 ];
 
 export function StatusControl({ id, status }: Props) {
@@ -21,9 +21,7 @@ export function StatusControl({ id, status }: Props) {
     if (s === status) return;
     start(async () => {
       const res = await updateMissionStatusAction(id, s);
-      if (res.ok && s === "concluida") {
-        celebrate();
-      }
+      if (res.ok && s === "concluida") celebrate();
     });
   }
 
@@ -38,7 +36,7 @@ export function StatusControl({ id, status }: Props) {
     const root = document.createElement("div");
     root.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:60;display:flex;align-items:center;justify-content:center;";
     root.innerHTML = `
-      <div style="font-family:'Bebas Neue', Impact, sans-serif; font-size:96px; letter-spacing:.15em; color:#22d3ee; text-shadow:0 0 30px rgba(34,211,238,.6); animation:popUp 1.3s ease-out forwards;">
+      <div style="font-family:'Bebas Neue', Impact, sans-serif; font-size:96px; letter-spacing:.12em; color:#ff5a1f; text-shadow:0 0 30px rgba(255,90,31,.5); animation:popUp 1.3s ease-out forwards;">
         MISSÃO CUMPRIDA
       </div>
       <style>@keyframes popUp{0%{transform:scale(.5);opacity:0}30%{transform:scale(1.1);opacity:1}80%{transform:scale(1);opacity:1}100%{transform:scale(1);opacity:0}}</style>
@@ -58,10 +56,10 @@ export function StatusControl({ id, status }: Props) {
             onClick={() => set(s.key)}
             disabled={pending}
             title={s.label}
-            className={`p-1.5 border rounded-sm transition-all ${
+            className={`p-1.5 rounded-md transition-all ${
               active
-                ? "bg-camo-mid border-camo-cyan " + s.color
-                : "border-camo-line text-camo-cyan/40 hover:text-camo-cyan hover:border-camo-cyan/40"
+                ? s.activeCls + " ring-1 ring-inset ring-white/10"
+                : "text-white/30 hover:text-white/70 hover:bg-white/5"
             }`}
           >
             <Icon className="w-3.5 h-3.5" />
@@ -71,18 +69,18 @@ export function StatusControl({ id, status }: Props) {
       {!showConfirm ? (
         <button
           onClick={() => setShowConfirm(true)}
-          className="ml-1 p-1.5 border border-camo-line text-camo-cyan/30 hover:text-urgent hover:border-urgent/40 rounded-sm transition-all"
+          className="ml-1 p-1.5 text-white/20 hover:text-urgent hover:bg-urgent/10 rounded-md transition-all"
           title="Excluir"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       ) : (
         <div className="ml-1 flex items-center gap-1 text-[10px]">
-          <button onClick={remove} disabled={pending} className="px-2 py-1 bg-urgent/20 border border-urgent/50 text-urgent rounded-sm uppercase tracking-wider hover:bg-urgent/30">
-            Confirmar
+          <button onClick={remove} disabled={pending} className="px-2 py-1 bg-urgent/20 text-urgent rounded-md font-medium hover:bg-urgent/30">
+            Excluir
           </button>
-          <button onClick={() => setShowConfirm(false)} className="px-2 py-1 border border-camo-line text-camo-cyan/60 rounded-sm uppercase tracking-wider">
-            X
+          <button onClick={() => setShowConfirm(false)} className="px-2 py-1 text-white/50 hover:text-white rounded-md">
+            ✕
           </button>
         </div>
       )}

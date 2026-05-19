@@ -2,7 +2,7 @@ type Slice = { label: string; value: number; color: string };
 
 export function PieChart({
   slices,
-  size = 180,
+  size = 220,
   centerLabel,
   centerValue,
 }: {
@@ -14,16 +14,20 @@ export function PieChart({
   const total = slices.reduce((acc, s) => acc + s.value, 0);
   const cx = size / 2;
   const cy = size / 2;
-  const r = size / 2 - 8;
-  const innerR = r * 0.6;
+  const r = size / 2 - 6;
+  const innerR = r * 0.62;
 
   if (total === 0) {
     return (
-      <div className="flex flex-col items-center justify-center" style={{ width: size, height: size }}>
+      <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size}>
-          <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1d3a6f" strokeWidth="14" />
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="18" />
+          <circle cx={cx} cy={cy} r={innerR} fill="rgba(255,255,255,0.02)" />
         </svg>
-        <div className="absolute font-stencil text-camo-cyan/50 text-sm tracking-wider">SEM DADOS</div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white/30">
+          <div className="font-stencil text-4xl leading-none">0</div>
+          <div className="text-[10px] uppercase tracking-widest mt-1">Sem dados</div>
+        </div>
       </div>
     );
   }
@@ -48,17 +52,30 @@ export function PieChart({
 
   return (
     <div className="relative inline-block">
-      <svg width={size} height={size} className="drop-shadow-[0_0_18px_rgba(34,211,238,0.15)]">
+      <svg width={size} height={size}>
+        <defs>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="2" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        {/* anel externo discreto */}
+        <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
         {arcs.map((a, i) => (
-          <path key={i} d={a.d} fill={a.color} stroke="#050b1a" strokeWidth="1.5">
+          <path key={i} d={a.d} fill={a.color} opacity="0.95">
             <title>{`${a.label}: ${a.value}`}</title>
           </path>
         ))}
-        <circle cx={cx} cy={cy} r={innerR - 1} fill="none" stroke="#22d3ee" strokeOpacity="0.2" strokeWidth="1" />
+        {/* anel interno (efeito vidro) */}
+        <circle cx={cx} cy={cy} r={innerR} fill="rgba(10,13,20,0.6)" />
+        <circle cx={cx} cy={cy} r={innerR} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <div className="font-stencil text-4xl tracking-wider text-camo-cyan leading-none">{centerValue ?? total}</div>
-        {centerLabel && <div className="text-[10px] uppercase tracking-widest text-camo-cyan/60 mt-1">{centerLabel}</div>}
+        <div className="font-stencil text-5xl text-white leading-none">{centerValue ?? total}</div>
+        {centerLabel && <div className="text-[10px] uppercase tracking-[0.2em] text-white/40 mt-2">{centerLabel}</div>}
       </div>
     </div>
   );
