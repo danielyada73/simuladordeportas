@@ -39,6 +39,7 @@ def is_configured() -> bool:
 
 
 def upsert_snapshot(kind: str, payload: Dict[str, Any], item_count: int, duration_ms: int, status: str, error: Optional[str] = None) -> None:
+    from datetime import datetime, timezone
     sb = get_client()
     sb.table("monday_snapshot").upsert(
         {
@@ -48,6 +49,7 @@ def upsert_snapshot(kind: str, payload: Dict[str, Any], item_count: int, duratio
             "duration_ms": duration_ms,
             "status": status,
             "error": error,
+            "last_synced_at": datetime.now(timezone.utc).isoformat(),
         },
         on_conflict="kind",
     ).execute()
