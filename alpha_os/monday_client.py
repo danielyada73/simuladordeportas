@@ -100,6 +100,51 @@ def graphql(query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str,
     return data.get("data") or {}
 
 
+def _clean_text(value: Any) -> str:
+    """
+    Sanitiza string vinda do Monday/Supabase:
+    - normaliza Unicode pra NFC
+    - remove surrogates invalidos (causa de mojibake \\u00c3\\udc81 -> 'A')
+    - mantem todos os acentos legitimos
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        value = str(value)
+    # remove surrogates invalidos e re-encoda limpo
+    value = value.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
+    # normaliza pra NFC (composed form, mais comum)
+    return unicodedata.normalize("NFC", value)
+
+
+def _looks_like_email(value: str) -> bool:
+    if not value:
+        return False
+    return "@" in value and "." in value.split("@", 1)[-1]
+
+
+# Mapeamento manual de email -> nome display (quando o Monday devolve email no campo de pessoa)
+EMAIL_TO_NAME: Dict[str, str] = {
+    "je.belleck1@gmail.com": "Jefferson Belleck",
+    "jefferson@alphadigital.com.br": "Jefferson Belleck",
+}
+
+
+def _resolve_person_name(raw: str) -> str:
+    raw = _clean_text(raw).strip()
+    if not raw:
+        return raw
+    if _looks_like_email(raw):
+        key = raw.lower()
+        if key in EMAIL_TO_NAME:
+            return EMAIL_TO_NAME[key]
+        # fallback: pega parte antes do @, capitaliza
+        local = key.split("@", 1)[0]
+        local = re.sub(r"[\._-]+", " ", local).strip().title()
+        return local or raw
+    return raw
+
+
 def _strip_accents(text: str) -> str:
     return "".join(char for char in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(char))
 
@@ -231,7 +276,11 @@ def list_boards(limit: int = 500) -> List[Dict[str, str]]:
     for board in boards:
         if str(board.get("state") or "").lower() == "archived":
             continue
-        rows.append({"id": str(board.get("id") or ""), "name": str(board.get("name") or "")})
+        board_name = _clean_text(board.get("name") or "")
+        # filtra boards auxiliares de subitens (Monday cria automaticamente como "Subelementos de ...")
+        if board_name.lower().startswith(("subelementos de", "subitems of", "subelementos")):
+            continue
+        rows.append({"id": str(board.get("id") or ""), "name": board_name})
     _BOARDS_CACHE = rows
     _BOARDS_CACHE_AT = now
     return rows
@@ -285,12 +334,26 @@ def _looks_like_valid_client_name(client_name: str, board_type: Optional[str]) -
         "criacao de lp e estrutura",
         "e estrutura",
         "estrutura",
+        # nomes residuais que aparecem quando o board e generico (sem cliente)
+        "e otimizacoes",
+        "saldo de campanha",
+        "campanha",
+        "campanhas e otimizacoes",
+        "criacao de lp e estrutura es",
     }
     if name in generic_names:
         return False
+    # se comeca com fragmento residual de marker (ex: "e otimiz...")
+    suspicious_prefixes = ("e otimiz", "e estrutura", "de saldo", "de campanha")
+    for prefix in suspicious_prefixes:
+        if name.startswith(prefix):
+            return False
     for marker in BOARD_TYPE_MARKERS.get(board_type or "", []):
         marker_norm = _norm(marker)
         if name == marker_norm:
+            return False
+        # rejeita se o que sobrou esta contido inteiramente dentro do marker
+        if name in marker_norm:
             return False
     return True
 
@@ -454,7 +517,7 @@ def board_items_full(board_id: str, limit: int = 200) -> List[Dict[str, Any]]:
         return []
 
     board = boards[0]
-    board_name = str(board.get("name") or "")
+    board_name = _clean_text(board.get("name") or "")
     items = ((board.get("items_page") or {}).get("items")) or []
     rows: List[Dict[str, Any]] = []
     for item in items:
@@ -511,9 +574,9 @@ def list_all_tasks(limit_per_board: int = 200) -> List[Dict[str, Any]]:
                 status_column_id = ""
 
                 for column in item.get("columns") or []:
-                    title = str(column.get("title") or "")
+                    title = _clean_text(column.get("title") or "")
                     title_norm = _norm(title)
-                    text = str(column.get("text") or "").strip()
+                    text = _clean_text(column.get("text") or "").strip()
                     col_type = str(column.get("type") or "").strip().lower()
                     if title:
                         columns_by_title[title] = text
@@ -526,30 +589,31 @@ def list_all_tasks(limit_per_board: int = 200) -> List[Dict[str, Any]]:
                     if not priority_text and title_norm == "prioridade" and text:
                         priority_text = text
                     if col_type in ("multiple-person", "people", "person", "team") and text:
-                        people.extend(_split_people(text))
+                        for raw_person in _split_people(text):
+                            people.append(_resolve_person_name(raw_person))
 
                 dedup_people: List[str] = []
                 for person in people:
-                    if person not in dedup_people:
+                    if person and person not in dedup_people:
                         dedup_people.append(person)
 
                 tasks.append(
                     {
-                        "client_name": client_name,
+                        "client_name": _clean_text(client_name),
                         "board_type": board_type,
                         "board_id": item.get("board_id"),
-                        "board_name": item.get("board_name"),
+                        "board_name": _clean_text(item.get("board_name") or ""),
                         "group_id": item.get("group_id"),
-                        "group_name": item.get("group_name"),
+                        "group_name": _clean_text(item.get("group_name") or ""),
                         "item_id": item.get("id"),
-                        "item_name": item.get("name"),
-                        "status": status_text,
+                        "item_name": _clean_text(item.get("name") or ""),
+                        "status": _clean_text(status_text),
                         "status_column_id": status_column_id,
-                        "priority": priority_text,
+                        "priority": _clean_text(priority_text),
                         "due_date": due_date.isoformat() if due_date else "",
                         "assignees": dedup_people,
                         "assignees_text": ", ".join(dedup_people),
-                        "latest_update": item.get("latest_update") or "",
+                        "latest_update": _clean_text(item.get("latest_update") or ""),
                         "columns": columns_by_title,
                     }
                 )
