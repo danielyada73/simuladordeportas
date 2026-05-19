@@ -14,9 +14,9 @@ type Props = {
 };
 
 const PRIORITIES: { key: MissionPriority; label: string; icon: any; activeCls: string }[] = [
-  { key: "alta", label: "Alta", icon: Flame, activeCls: "bg-urgent/15 text-urgent border-urgent/40" },
-  { key: "media", label: "Média", icon: AlertTriangle, activeCls: "bg-camo-amber/15 text-camo-amber border-camo-amber/40" },
-  { key: "baixa", label: "Baixa", icon: Minus, activeCls: "bg-camo-cyan/15 text-camo-cyan border-camo-cyan/40" },
+  { key: "alta", label: "Alta", icon: Flame, activeCls: "bg-ms-blue text-black border-ms-blue" },
+  { key: "media", label: "Média", icon: AlertTriangle, activeCls: "bg-white text-black border-white" },
+  { key: "baixa", label: "Baixa", icon: Minus, activeCls: "bg-white/10 text-white border-white/20" },
 ];
 
 const KINDS: { key: MissionKind; label: string; icon: any }[] = [
@@ -118,11 +118,11 @@ export function CreateMissionDialog({ open, onClose, users, clientOptions }: Pro
       <form
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0a0d14] shadow-2xl mb-16"
+        className="w-full max-w-2xl rounded-[30px] border border-white/10 bg-[#08090b] shadow-[0_30px_100px_-40px_rgba(0,180,252,0.55)] mb-16 overflow-hidden"
       >
         <div className="flex items-center justify-between px-6 py-5 border-b border-white/[0.06]">
           <div>
-            <div className="font-stencil text-3xl tracking-wider text-white">NOVA MISSÃO</div>
+            <div className="font-stencil text-4xl tracking-wider text-white">NOVA MISSÃO</div>
             <div className="text-sm text-white/40 mt-0.5">Briefing operacional</div>
           </div>
           <button type="button" onClick={onClose} className="text-white/40 hover:text-white p-1.5 hover:bg-white/5 rounded-lg transition-colors">
@@ -212,7 +212,7 @@ export function CreateMissionDialog({ open, onClose, users, clientOptions }: Pro
                     onClick={() => setKind(k.key)}
                     className={`flex items-center justify-center gap-2 py-2.5 border rounded-xl text-sm transition-all ${
                       active
-                        ? "bg-accent/15 text-accent border-accent/40 font-semibold"
+                        ? "bg-ms-blue text-black border-ms-blue font-semibold"
                         : "border-white/[0.08] text-white/50 hover:border-white/20"
                     }`}
                   >
@@ -266,7 +266,7 @@ export function CreateMissionDialog({ open, onClose, users, clientOptions }: Pro
           <button
             type="submit"
             disabled={isPending}
-            className="px-6 py-2.5 bg-gradient-to-br from-accent to-[#ff7c3f] text-white font-medium text-sm rounded-xl shadow-lg shadow-accent/25 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            className="px-6 py-2.5 bg-ms-blue text-black font-semibold text-sm rounded-xl shadow-lg shadow-ms-blue/25 hover:bg-ms-blue-soft disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             {isPending ? "Enviando..." : "Cadastrar missão"}
           </button>
@@ -293,7 +293,7 @@ function showToast(message: string) {
   const root = document.createElement("div");
   root.style.cssText = "position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;";
   root.innerHTML = `
-    <div style="background:#0a0d14;border:1px solid rgba(255,90,31,0.4);color:#ff5a1f;padding:12px 20px;border-radius:12px;font-family:Inter,system-ui,sans-serif;font-weight:500;font-size:14px;box-shadow:0 10px 40px rgba(255,90,31,0.25);animation:slideIn 2.5s ease-out forwards;">
+    <div style="background:#08090b;border:1px solid rgba(0,180,252,0.45);color:#00B4FC;padding:12px 20px;border-radius:16px;font-family:Inter,system-ui,sans-serif;font-weight:600;font-size:14px;box-shadow:0 10px 40px rgba(0,180,252,0.25);animation:slideIn 2.5s ease-out forwards;">
       ${message}
     </div>
     <style>@keyframes slideIn{0%{transform:translateY(-20px);opacity:0}10%{transform:translateY(0);opacity:1}85%{transform:translateY(0);opacity:1}100%{transform:translateY(-20px);opacity:0}}</style>
