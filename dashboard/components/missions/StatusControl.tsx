@@ -51,7 +51,11 @@ export function StatusControl({ id, status, variant = "dark" }: Props) {
   const cancelCls = isLight ? "text-black/50 hover:text-black" : "text-white/50 hover:text-white";
 
   return (
-    <div className="flex items-center gap-1">
+    <div
+      className="flex items-center gap-1"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
       {STATUSES.map((s) => {
         const Icon = s.icon;
         const active = status === s.key;

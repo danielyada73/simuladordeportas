@@ -12,6 +12,7 @@ export type Mission = {
   due_date: string;
   status: MissionStatus;
   notes: string | null;
+  sort_order: number | null;
   created_by_slug: string | null;
   created_at: string;
   updated_at: string | null;

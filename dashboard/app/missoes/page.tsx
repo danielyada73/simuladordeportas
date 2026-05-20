@@ -7,8 +7,8 @@ import type {
   ResponsibleStat,
 } from "@/lib/missions-types";
 import { MissoesHeader } from "@/components/missions/MissoesHeader";
-import { MissionCard } from "@/components/missions/MissionCard";
 import { PieChart } from "@/components/missions/PieChart";
+import { SortableMissionList } from "@/components/missions/SortableMissionList";
 import { ArrowUpRight, Sparkles, TriangleAlert, Check } from "lucide-react";
 
 type SP = Promise<{ window?: string; custom_from?: string; custom_to?: string }>;
@@ -159,7 +159,13 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
             ) : (
               <div className="grid lg:grid-cols-2 gap-4">
                 {groupByResponsible(principais, users).map(({ user, items }) => (
-                  <PrincipalColumn key={user.slug} user={user} missions={items} />
+                  <PrincipalColumn
+                    key={user.slug}
+                    user={user}
+                    missions={items}
+                    users={users}
+                    clientOptions={settings.client_options || []}
+                  />
                 ))}
               </div>
             )}
@@ -178,11 +184,14 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
             {secundarias.length === 0 ? (
               <EmptyDark message="Nada secundário no momento" />
             ) : (
-              <div className="grid lg:grid-cols-2 gap-3">
-                {secundarias.map((m) => (
-                  <MissionCard key={m.id} mission={m} compact variant="dark" />
-                ))}
-              </div>
+              <SortableMissionList
+                missions={secundarias}
+                users={users}
+                clientOptions={settings.client_options || []}
+                compact
+                variant="dark"
+                className="grid lg:grid-cols-2 gap-3"
+              />
             )}
           </DarkCard>
         </section>
@@ -346,7 +355,17 @@ function Stat({ label, value, tone = "text-black/70" }: { label: string; value: 
 
 // ============================================================ Principal column (no card branco)
 
-function PrincipalColumn({ user, missions }: { user: MissionUser; missions: Mission[] }) {
+function PrincipalColumn({
+  user,
+  missions,
+  users,
+  clientOptions,
+}: {
+  user: MissionUser;
+  missions: Mission[];
+  users: MissionUser[];
+  clientOptions: string[];
+}) {
   return (
     <div className="rounded-[24px] bg-black/[0.035] overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-black/[0.06]">
@@ -368,8 +387,13 @@ function PrincipalColumn({ user, missions }: { user: MissionUser; missions: Miss
         </div>
         <div className="font-stencil text-3xl text-black/75 leading-none">{String(missions.length).padStart(2, "0")}</div>
       </div>
-      <div className="p-3 space-y-2.5">
-        {missions.map((m) => <MissionCard key={m.id} mission={m} variant="light" />)}
+      <div className="p-3">
+        <SortableMissionList
+          missions={missions}
+          users={users}
+          clientOptions={clientOptions}
+          variant="light"
+        />
       </div>
     </div>
   );
