@@ -47,6 +47,7 @@ export function CreateMissionDialog({ open, onClose, users, clientOptions }: Pro
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
+  const uniqueClientOptions = Array.from(new Set(clientOptions));
 
   const [name, setName] = useState("");
   const [client, setClient] = useState("");
@@ -157,7 +158,7 @@ export function CreateMissionDialog({ open, onClose, users, clientOptions }: Pro
                 className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 text-white placeholder:text-white/25 focus:outline-none focus:border-accent transition-colors"
               />
               <datalist id="client-options">
-                {clientOptions.map((c) => <option key={c} value={c} />)}
+                {uniqueClientOptions.map((c) => <option key={c} value={c} />)}
               </datalist>
             </div>
             <div>

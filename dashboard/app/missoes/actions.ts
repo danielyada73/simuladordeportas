@@ -15,11 +15,43 @@ export type CreateMissionInput = {
   created_by_slug?: string;
 };
 
+export type UpdateMissionInput = {
+  name?: string;
+  client?: string | null;
+  responsible_slug?: string;
+  priority?: MissionPriority;
+  kind?: MissionKind;
+  due_date?: string;
+  status?: MissionStatus;
+  notes?: string | null;
+  sort_order?: number;
+};
+
 export async function createMissionAction(input: CreateMissionInput) {
   try {
     const created = await missionsApi.create(input);
     revalidatePath("/missoes");
     return { ok: true as const, mission: created };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : "Erro" };
+  }
+}
+
+export async function updateMissionAction(id: string, input: UpdateMissionInput) {
+  try {
+    const updated = await missionsApi.patch(id, input);
+    revalidatePath("/missoes");
+    return { ok: true as const, mission: updated };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : "Erro" };
+  }
+}
+
+export async function reorderMissionsAction(items: { id: string; sort_order: number }[]) {
+  try {
+    await Promise.all(items.map((item) => missionsApi.patch(item.id, { sort_order: item.sort_order })));
+    revalidatePath("/missoes");
+    return { ok: true as const };
   } catch (e) {
     return { ok: false as const, error: e instanceof Error ? e.message : "Erro" };
   }

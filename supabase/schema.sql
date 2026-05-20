@@ -149,6 +149,7 @@ create table if not exists missions (
   due_date date not null,
   status text not null default 'nao_iniciada' check (status in ('nao_iniciada','em_progresso','concluida')),
   notes text,
+  sort_order int default 0,
   created_by_slug text,
   created_at timestamptz default now(),
   completed_at timestamptz,
@@ -158,6 +159,8 @@ create table if not exists missions (
 create index if not exists missions_due_idx on missions (due_date);
 create index if not exists missions_status_idx on missions (status);
 create index if not exists missions_responsible_idx on missions (responsible_slug);
+alter table missions add column if not exists sort_order int default 0;
+create index if not exists missions_sort_order_idx on missions (sort_order);
 
 create table if not exists mission_settings (
   id text primary key default 'singleton',

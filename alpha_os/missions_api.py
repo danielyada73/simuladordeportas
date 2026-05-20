@@ -65,6 +65,7 @@ class MissionCreate(BaseModel):
     kind: str = "principal"
     due_date: str
     notes: Optional[str] = None
+    sort_order: Optional[int] = None
     created_by_slug: Optional[str] = None
 
 
@@ -77,6 +78,7 @@ class MissionUpdate(BaseModel):
     due_date: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
+    sort_order: Optional[int] = None
 
 
 class UserCreate(BaseModel):
@@ -99,6 +101,23 @@ class SettingsUpdate(BaseModel):
     client_options: Optional[List[str]] = None
 
 
+_PRIORITY_RANK = {"alta": 0, "media": 1, "baixa": 2}
+
+
+def _mission_sort_key(mission: Dict[str, Any]) -> tuple[int, str, int, str]:
+    raw_order = mission.get("sort_order")
+    try:
+        sort_order = int(raw_order) if raw_order is not None else 999999
+    except (TypeError, ValueError):
+        sort_order = 999999
+    return (
+        sort_order,
+        mission.get("due_date") or "",
+        _PRIORITY_RANK.get(mission.get("priority") or "media", 1),
+        mission.get("created_at") or "",
+    )
+
+
 # ---------------------------------------------------------------- missions
 
 @router.get("/missions")
@@ -113,12 +132,13 @@ def list_missions(
     sb = _require_supabase()
     start, end = _window_dates(window, custom_from, custom_to)
 
-    q = sb.table("missions").select("*").order("due_date", desc=False).order("priority", desc=False)
+    q = sb.table("missions").select("*")
     if start: q = q.gte("due_date", start)
     if end: q = q.lte("due_date", end)
     if not include_completed: q = q.neq("status", "concluida")
 
     rows = q.execute().data or []
+    rows.sort(key=_mission_sort_key)
     return {"window": window, "count": len(rows), "items": rows}
 
 
@@ -209,9 +229,18 @@ def update_mission(
     _check_auth(authorization)
     sb = _require_supabase()
 
-    update: Dict[str, Any] = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
+    update: Dict[str, Any] = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
     if "status" in update and update["status"] not in ("nao_iniciada", "em_progresso", "concluida"):
         raise HTTPException(status_code=400, detail="status invalido")
+    if "priority" in update and update["priority"] not in ("alta", "media", "baixa"):
+        raise HTTPException(status_code=400, detail="priority invalido")
+    if "kind" in update and update["kind"] not in ("principal", "secundaria"):
+        raise HTTPException(status_code=400, detail="kind invalido")
+    if "due_date" in update:
+        try:
+            datetime.strptime(update["due_date"], "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="due_date deve ser YYYY-MM-DD")
 
     update["updated_at"] = datetime.utcnow().isoformat()
     if update.get("status") == "concluida":
