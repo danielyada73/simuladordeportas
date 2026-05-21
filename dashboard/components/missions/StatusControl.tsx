@@ -1,19 +1,25 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Loader, Circle, Trash2 } from "lucide-react";
+import { Check, Circle, Loader, Trash2 } from "lucide-react";
 import { updateMissionStatusAction, deleteMissionAction } from "@/app/missoes/actions";
-import type { MissionStatus } from "@/lib/missions-types";
+import { playMissionPassed } from "./missionArcadeFx";
+import type { MissionPriority, MissionStatus } from "@/lib/missions-types";
 
-type Props = { id: string; status: MissionStatus; variant?: "dark" | "light" };
+type Props = {
+  id: string;
+  status: MissionStatus;
+  priority: MissionPriority;
+  variant?: "dark" | "light";
+};
 
 const STATUSES: { key: MissionStatus; label: string; icon: any; cls: string }[] = [
   { key: "nao_iniciada", label: "Aberta", icon: Circle, cls: "bg-ms-blue/15 text-ms-blue" },
   { key: "em_progresso", label: "Em curso", icon: Loader, cls: "bg-ms-blue text-black" },
-  { key: "concluida", label: "Concluída", icon: Check, cls: "bg-white text-black" },
+  { key: "concluida", label: "Concluida", icon: Check, cls: "bg-white text-black" },
 ];
 
-export function StatusControl({ id, status, variant = "dark" }: Props) {
+export function StatusControl({ id, status, priority, variant = "dark" }: Props) {
   const [pending, start] = useTransition();
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -21,7 +27,7 @@ export function StatusControl({ id, status, variant = "dark" }: Props) {
     if (s === status) return;
     start(async () => {
       const res = await updateMissionStatusAction(id, s);
-      if (res.ok && s === "concluida") celebrate();
+      if (res.ok && s === "concluida") playMissionPassed(priority);
     });
   }
 
@@ -29,20 +35,6 @@ export function StatusControl({ id, status, variant = "dark" }: Props) {
     start(async () => {
       await deleteMissionAction(id);
     });
-  }
-
-  function celebrate() {
-    if (typeof window === "undefined") return;
-    const root = document.createElement("div");
-    root.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:60;display:flex;align-items:center;justify-content:center;";
-    root.innerHTML = `
-      <div style="font-family:'Bebas Neue', Impact, sans-serif; font-size:96px; letter-spacing:.12em; color:#00B4FC; text-shadow:0 0 30px rgba(0,180,252,.5); animation:popUp 1.3s ease-out forwards;">
-        MISSÃO CUMPRIDA
-      </div>
-      <style>@keyframes popUp{0%{transform:scale(.5);opacity:0}30%{transform:scale(1.1);opacity:1}80%{transform:scale(1);opacity:1}100%{transform:scale(1);opacity:0}}</style>
-    `;
-    document.body.appendChild(root);
-    setTimeout(() => root.remove(), 1300);
   }
 
   const isLight = variant === "light";
@@ -87,7 +79,7 @@ export function StatusControl({ id, status, variant = "dark" }: Props) {
             Excluir
           </button>
           <button onClick={() => setShowConfirm(false)} className={`px-2 py-1 rounded-full ${cancelCls}`}>
-            ✕
+            x
           </button>
         </div>
       )}

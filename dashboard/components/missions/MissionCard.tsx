@@ -1,8 +1,10 @@
 "use client";
 
-import { Calendar } from "lucide-react";
+import { Calendar, Settings } from "lucide-react";
+import type { MouseEvent } from "react";
 import { useState } from "react";
 import { MissionDetailsDialog } from "./MissionDetailsDialog";
+import { MissionViewDialog } from "./MissionViewDialog";
 import { StatusControl } from "./StatusControl";
 import type { Mission, MissionUser } from "@/lib/missions-types";
 
@@ -34,6 +36,7 @@ type Props = {
   clientOptions: string[];
   compact?: boolean;
   variant?: "dark" | "light";
+  tone?: "default" | "meeting";
   suppressOpen?: boolean;
 };
 
@@ -43,30 +46,43 @@ export function MissionCard({
   clientOptions,
   compact = false,
   variant = "dark",
+  tone = "default",
   suppressOpen = false,
 }: Props) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const palette = variant === "light" ? PRIO_LIGHT : PRIO_DARK;
   const prio = palette[mission.priority] || palette.media;
   const date = fmtDate(mission.due_date);
   const isDone = mission.status === "concluida";
 
   const isLight = variant === "light";
+  const isMeeting = tone === "meeting";
   const surface = isLight
     ? "bg-white border-black/5 hover:bg-black/[0.025]"
     : "bg-white/[0.035] border-white/[0.08] hover:bg-white/[0.06]";
   const compactSurface = isLight
     ? surface
-    : "bg-white/[0.07] border-white/[0.16] hover:bg-white/[0.11]";
+    : isMeeting
+      ? "bg-ms-blue border-ms-blue hover:bg-ms-blue-soft shadow-[0_14px_34px_-24px_rgba(0,180,252,0.9)]"
+      : "bg-white/[0.07] border-white/[0.16] hover:bg-white/[0.11]";
   const nameColor = isLight
     ? (isDone ? "text-black/35 line-through" : "text-black/90")
-    : (isDone ? "text-white/40 line-through" : "text-white/95");
-  const clientColor = isLight ? "text-black/45" : compact ? "text-white/60" : "text-white/45";
+    : isMeeting
+      ? (isDone ? "text-black/40 line-through" : "text-black")
+      : (isDone ? "text-white/40 line-through" : "text-white/95");
+  const clientColor = isLight || isMeeting ? "text-black/55" : compact ? "text-white/60" : "text-white/45";
   const dateColor = isLight
     ? (date.overdue && !isDone ? "text-ms-blue-deep" : "text-black/50")
-    : (date.overdue && !isDone ? "text-ms-blue" : "text-white/50");
+    : isMeeting
+      ? "text-black/65"
+      : (date.overdue && !isDone ? "text-ms-blue" : "text-white/50");
   const openDetails = () => {
-    if (!suppressOpen) setDetailsOpen(true);
+    if (!suppressOpen) setViewOpen(true);
+  };
+  const openEdit = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    setEditOpen(true);
   };
 
   if (compact) {
@@ -93,14 +109,30 @@ export function MissionCard({
           <div className={`text-xs numeric shrink-0 ${dateColor}`}>
             {date.d} {date.m}
           </div>
-          <StatusControl id={mission.id} status={mission.status} variant={variant} />
+          <button
+            type="button"
+            onClick={openEdit}
+            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+              isMeeting ? "text-black/55 hover:text-black hover:bg-black/10" : "text-white/35 hover:text-white hover:bg-white/10"
+            }`}
+            title="Editar"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+          <StatusControl id={mission.id} status={mission.status} priority={mission.priority} variant={isMeeting ? "light" : variant} />
         </div>
+        <MissionViewDialog
+          mission={mission}
+          users={users}
+          open={viewOpen}
+          onClose={() => setViewOpen(false)}
+        />
         <MissionDetailsDialog
           mission={mission}
           users={users}
           clientOptions={clientOptions}
-          open={detailsOpen}
-          onClose={() => setDetailsOpen(false)}
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
         />
       </>
     );
@@ -132,6 +164,16 @@ export function MissionCard({
                 {mission.name}
               </h4>
             </div>
+            <button
+              type="button"
+              onClick={openEdit}
+              className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-all ${
+                isLight ? "text-black/30 hover:text-black hover:bg-black/5" : "text-white/35 hover:text-white hover:bg-white/10"
+              }`}
+              title="Editar"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
           </div>
 
           <div className="flex items-center justify-between gap-3 pt-1">
@@ -139,16 +181,22 @@ export function MissionCard({
               <Calendar className="w-3.5 h-3.5" />
               <span className="numeric">{date.d} {date.m}</span>
             </div>
-            <StatusControl id={mission.id} status={mission.status} variant={variant} />
+            <StatusControl id={mission.id} status={mission.status} priority={mission.priority} variant={variant} />
           </div>
         </div>
       </div>
+      <MissionViewDialog
+        mission={mission}
+        users={users}
+        open={viewOpen}
+        onClose={() => setViewOpen(false)}
+      />
       <MissionDetailsDialog
         mission={mission}
         users={users}
         clientOptions={clientOptions}
-        open={detailsOpen}
-        onClose={() => setDetailsOpen(false)}
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
       />
     </>
   );

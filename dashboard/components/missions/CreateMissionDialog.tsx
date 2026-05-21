@@ -20,8 +20,8 @@ const PRIORITIES: { key: MissionPriority; label: string; icon: any; activeCls: s
 ];
 
 const KINDS: { key: MissionKind; label: string; icon: any }[] = [
-  { key: "principal", label: "Principal", icon: Target },
-  { key: "secundaria", label: "Secundária", icon: Crosshair },
+  { key: "principal", label: "Missão", icon: Target },
+  { key: "secundaria", label: "Reunião", icon: Crosshair },
 ];
 
 function todayISO() {
