@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Plus, Settings as SettingsIcon, ChevronLeft } from "lucide-react";
 import { CreateMissionDialog } from "./CreateMissionDialog";
 import { SettingsDialog } from "./SettingsDialog";
+import { playOverdueFailed } from "./missionArcadeFx";
 import type { MissionUser, MissionSettings } from "@/lib/missions-types";
 
 type Props = { users: MissionUser[]; settings: MissionSettings };
@@ -28,6 +29,7 @@ export function MissoesHeader({ users, settings }: Props) {
   const current = params.get("window") || "today";
 
   function setWindow(k: string) {
+    if (k === "overdue") playOverdueFailed();
     const next = new URLSearchParams(params.toString());
     next.set("window", k);
     if (k !== "custom") {

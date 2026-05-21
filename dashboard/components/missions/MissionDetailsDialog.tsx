@@ -21,8 +21,8 @@ const PRIORITIES: { key: MissionPriority; label: string }[] = [
 ];
 
 const KINDS: { key: MissionKind; label: string }[] = [
-  { key: "principal", label: "Principal" },
-  { key: "secundaria", label: "Secundaria" },
+  { key: "principal", label: "Missao" },
+  { key: "secundaria", label: "Reuniao" },
 ];
 
 export function MissionDetailsDialog({ mission, users, clientOptions, open, onClose }: Props) {

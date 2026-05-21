@@ -11,7 +11,9 @@ type Props = {
   clientOptions: string[];
   variant?: "dark" | "light";
   compact?: boolean;
+  cardTone?: "default" | "meeting";
   className?: string;
+  storageKey: string;
 };
 
 export function SortableMissionList({
@@ -20,7 +22,9 @@ export function SortableMissionList({
   clientOptions,
   variant = "dark",
   compact = false,
+  cardTone = "default",
   className = "space-y-2.5",
+  storageKey,
 }: Props) {
   const [items, setItems] = useState(missions);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -29,17 +33,17 @@ export function SortableMissionList({
   const [, startTransition] = useTransition();
 
   useEffect(() => {
-    setItems(missions);
-  }, [missions]);
+    setItems(applyStoredOrder(missions, storageKey));
+  }, [missions, storageKey]);
 
   function move(from: number, to: number) {
     if (from === to || from < 0 || to < 0) return;
-    const previous = items;
     const next = [...items];
     const [removed] = next.splice(from, 1);
     if (!removed) return;
     next.splice(to, 0, removed);
     setItems(next);
+    saveStoredOrder(storageKey, next);
 
     startTransition(async () => {
       const res = await reorderMissionsAction(next.map((item, index) => ({
@@ -47,8 +51,7 @@ export function SortableMissionList({
         sort_order: index,
       })));
       if (!res.ok) {
-        setItems(previous);
-        window.alert(`Nao foi possivel reordenar: ${res.error}`);
+        console.warn("A ordem foi mantida neste navegador, mas nao persistiu no banco.", res.error);
       }
     });
   }
@@ -88,10 +91,34 @@ export function SortableMissionList({
             clientOptions={clientOptions}
             variant={variant}
             compact={compact}
+            tone={cardTone}
             suppressOpen={suppressOpen}
           />
         </div>
       ))}
     </div>
   );
+}
+
+function applyStoredOrder(missions: Mission[], storageKey: string): Mission[] {
+  if (typeof window === "undefined") return missions;
+  const raw = window.localStorage.getItem(storageKey);
+  if (!raw) return missions;
+
+  try {
+    const ids = JSON.parse(raw) as string[];
+    const position = new Map(ids.map((id, index) => [id, index]));
+    return [...missions].sort((a, b) => {
+      const aPos = position.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const bPos = position.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      return aPos - bPos;
+    });
+  } catch {
+    return missions;
+  }
+}
+
+function saveStoredOrder(storageKey: string, missions: Mission[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(storageKey, JSON.stringify(missions.map((mission) => mission.id)));
 }

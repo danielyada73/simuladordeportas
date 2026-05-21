@@ -145,12 +145,12 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
           </div>
         )}
 
-        {/* MISSÕES PRINCIPAIS — card branco grande estilo Mytasky */}
+        {/* MISSÕES */}
         <section>
           <WhiteCard>
             <div className="flex items-center justify-between mb-5">
               <div>
-                <h3 className="text-lg font-semibold text-black/90">Missões principais</h3>
+                <h3 className="text-lg font-semibold text-black/90">Missões</h3>
                 <p className="text-xs text-black/45 mt-0.5">Alvos prioritários · {principais.length} ativas</p>
               </div>
             </div>
@@ -172,17 +172,17 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
           </WhiteCard>
         </section>
 
-        {/* SECUNDÁRIAS — card escuro */}
+        {/* REUNIÕES */}
         <section>
           <DarkCard>
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-base font-semibold text-white">Missões secundárias</h3>
-                <p className="text-xs text-white/40 mt-0.5">Apoio operacional · {secundarias.length}</p>
+                <h3 className="text-base font-semibold text-white">Reuniões</h3>
+                <p className="text-xs text-white/40 mt-0.5">Agenda e alinhamentos · {secundarias.length}</p>
               </div>
             </div>
             {secundarias.length === 0 ? (
-              <EmptyDark message="Nada secundário no momento" />
+              <EmptyDark message="Nenhuma reunião no momento" />
             ) : (
               <SortableMissionList
                 missions={secundarias}
@@ -190,7 +190,9 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
                 clientOptions={settings.client_options || []}
                 compact
                 variant="dark"
+                cardTone="meeting"
                 className="grid lg:grid-cols-2 gap-3"
+                storageKey="missions:reunioes"
               />
             )}
           </DarkCard>
@@ -393,6 +395,7 @@ function PrincipalColumn({
           users={users}
           clientOptions={clientOptions}
           variant="light"
+          storageKey={`missions:principais:${user.slug}`}
         />
       </div>
     </div>
