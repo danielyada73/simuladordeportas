@@ -7,9 +7,10 @@ import type {
   ResponsibleStat,
 } from "@/lib/missions-types";
 import { MissoesHeader } from "@/components/missions/MissoesHeader";
+import { CompletedMissionRow } from "@/components/missions/CompletedMissionRow";
 import { PieChart } from "@/components/missions/PieChart";
 import { SortableMissionList } from "@/components/missions/SortableMissionList";
-import { ArrowUpRight, Sparkles, TriangleAlert, Check } from "lucide-react";
+import { ArrowUpRight, Sparkles, TriangleAlert } from "lucide-react";
 
 type SP = Promise<{ window?: string; custom_from?: string; custom_to?: string }>;
 
@@ -210,7 +211,13 @@ export default async function MissoesPage({ searchParams }: { searchParams: SP }
               </div>
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {concluidas.map((m) => (
-                  <CompletedRow key={m.id} mission={m} user={userBySlug.get(m.responsible_slug)} />
+                  <CompletedMissionRow
+                    key={m.id}
+                    mission={m}
+                    user={userBySlug.get(m.responsible_slug)}
+                    users={users}
+                    clientOptions={settings.client_options || []}
+                  />
                 ))}
               </div>
             </DarkCard>
@@ -402,24 +409,7 @@ function PrincipalColumn({
   );
 }
 
-// ============================================================ Concluídas / Performance
-
-function CompletedRow({ mission, user }: { mission: Mission; user?: MissionUser }) {
-  return (
-    <div className="flex items-center gap-3 rounded-[22px] bg-white/[0.08] border border-white/[0.12] px-3.5 py-3">
-      <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shrink-0">
-        <Check className="w-4 h-4 text-black" strokeWidth={3} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-white/85 truncate line-through">{mission.name}</div>
-        <div className="text-xs text-white/45 truncate mt-0.5">
-          {user?.display_name || mission.responsible_slug}
-          {mission.client ? ` · ${mission.client}` : ""}
-        </div>
-      </div>
-    </div>
-  );
-}
+// ============================================================ Performance
 
 function PerformanceCard({ stat, user, rate }: { stat: ResponsibleStat; user?: MissionUser; rate: number }) {
   const name = user?.display_name || stat.slug;
