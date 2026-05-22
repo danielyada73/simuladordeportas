@@ -19,6 +19,7 @@ export function playMissionPassed(priority: MissionPriority) {
 }
 
 export function playOverdueFailed() {
+  playAudio("/audio/audiosefudeu.mp3");
   showArcadeOverlay({
     title: "SE FODEU!",
     tone: "failed",
