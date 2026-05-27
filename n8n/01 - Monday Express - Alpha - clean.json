@@ -1,0 +1,695 @@
+{
+  "name": "01 - Monday Express - Alpha - clean",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alpha-monday-express",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1200,
+        0
+      ],
+      "id": "8c983a22-2a80-4f8d-b8f6-1ed54f6c83e7",
+      "name": "Webhook Novo Cliente",
+      "webhookId": "1ad48d79-7254-4f38-b6e7-7d2e4c55f40d",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $json.body ?? $json;\nconst binary = items[0].binary || {};\nconst firstBinaryKey = Object.keys(binary)[0] || null;\n\nconst pick = (...keys) => {\n  for (const key of keys) {\n    const value = source[key];\n    if (value !== undefined && value !== null && String(value).trim() !== '') {\n      return String(value).trim();\n    }\n  }\n  return '';\n};\n\nconst clienteNome = pick('cliente_nome', 'Nome do Cliente', 'nome_do_cliente', 'nomeCliente');\nconst segmento = pick('segmento', 'Segmento');\nconst prazoEntrega = pick('prazo_entrega', 'Prazo de Entrega', 'prazoEntrega', 'prazo');\n\nif (!clienteNome) {\n  throw new Error('Campo \\\"Nome do Cliente\\\" ausente.');\n}\n\nif (!segmento) {\n  throw new Error('Campo \\\"Segmento\\\" ausente.');\n}\n\nif (!prazoEntrega) {\n  throw new Error('Campo \\\"Prazo de Entrega\\\" ausente.');\n}\n\nif (!firstBinaryKey) {\n  throw new Error('Envie o briefing em arquivo .txt no multipart/form-data.');\n}\n\nreturn [{\n  json: {\n    cliente_nome: clienteNome,\n    segmento,\n    prazo_entrega: prazoEntrega,\n    arquivo_origem: firstBinaryKey,\n    recebido_em: new Date().toISOString()\n  },\n  binary: {\n    briefing_arquivo: binary[firstBinaryKey]\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        0
+      ],
+      "id": "69cefee2-78c4-4d1e-a048-345c5094c672",
+      "name": "Normalizar Entrada"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "briefing_arquivo",
+        "destinationKey": "texto_final",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -720,
+        0
+      ],
+      "id": "dc0e768f-588d-4df6-bfc0-598a430a9ef0",
+      "name": "Extrair TXT do Briefing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cliente = $('Normalizar Entrada').item.json.cliente_nome;\nconst segmento = $('Normalizar Entrada').item.json.segmento;\nconst prazo = $('Normalizar Entrada').item.json.prazo_entrega;\nconst transcript = $json.texto_final;\n\nconst prompt = `Voce e o Briefing Expert Alpha.\n\nCliente: ${cliente}\nSegmento: ${segmento}\nPrazo de entrega: ${prazo}\n\nSua tarefa: ler a transcricao abaixo e devolver um briefing inicial claro, organizado e acionavel em portugues do Brasil.\n\nEstruture a resposta nestas secoes:\n1. Resumo executivo\n2. Oferta principal\n3. Publico-alvo\n4. Dores e objecoes\n5. Diferenciais\n6. Metas e gargalos\n7. Materiais e acessos pendentes\n8. Proximos passos da Alpha\n9. Perguntas pendentes\n\nUse bullets curtos. Quando algo estiver faltando, marque como [PENDENTE].\n\nTRANSCRICAO:\n${transcript}`;\n\nreturn [{\n  json: {\n    cliente_nome: cliente,\n    segmento,\n    prazo_entrega: prazo,\n    transcript,\n    prompt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        0
+      ],
+      "id": "7f6282e8-3915-4b48-a2f8-8b25e71bc564",
+      "name": "Preparar Prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.OPENAI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": $env.OPENAI_MODEL || \"gpt-4.1-mini\",\n  \"temperature\": 0.2,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Voce e o Briefing Expert Alpha da Marketing Alpha Digital. Gere briefings claros, objetivos e prontos para operacao.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": $json.prompt\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -240,
+        0
+      ],
+      "id": "06bb7baf-44db-46eb-a618-15586bb3e3b3",
+      "name": "Gerar Briefing IA"
+    },
+    {
+      "parameters": {
+        "jsCode": "const briefing = $json.choices?.[0]?.message?.content?.trim();\nif (!briefing) {\n  throw new Error('A OpenAI nao retornou conteudo para o briefing.');\n}\n\nreturn [{\n  json: {\n    briefing_resumo: briefing\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "ad43d030-c411-42bb-82c4-9ab71f64ca06",
+      "name": "Extrair Resposta IA"
+    },
+    {
+      "parameters": {
+        "folderId": "default",
+        "title": "=`Briefing - {{ $('Normalizar Entrada').item.json.cliente_nome }} (Inicial)`"
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "21dbf3b4-bd5d-4977-9ee3-5da34cf97318",
+      "name": "Criar Doc do Briefing"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentURL": "={{ $json.id }}",
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "insert",
+              "text": "={{ '# Briefing - ' + $('Normalizar Entrada').item.json.cliente_nome + '\n\nSegmento: ' + $('Normalizar Entrada').item.json.segmento + '\nPrazo: ' + $('Normalizar Entrada').item.json.prazo_entrega + '\n\n' + $('Extrair Resposta IA').item.json.briefing_resumo + '\n\n---\nTRANSCRICAO ORIGINAL\n\n' + $('Preparar Prompt').item.json.transcript }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "id": "e7a80d8f-b526-41d8-aa87-cf36d44d0f9e",
+      "name": "Adicionar Conteudo no Doc"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cliente = $('Normalizar Entrada').item.json.cliente_nome;\nconst templateIds = {\n  briefing: Number($env.MONDAY_TEMPLATE_BOARD_BRIEFING_ID || 18400903329),\n  lp: Number($env.MONDAY_TEMPLATE_BOARD_LP_ID || 18400903643),\n  campanhas: Number($env.MONDAY_TEMPLATE_BOARD_CAMPANHAS_ID || 18400904092),\n  otimizacoes: Number($env.MONDAY_TEMPLATE_BOARD_OTIMIZACOES_ID || 18400904407),\n  saldo: Number($env.MONDAY_TEMPLATE_BOARD_SALDO_ID || 18400904467),\n};\n\nreturn [{\n  json: {\n    cliente_nome: cliente,\n    template_ids: templateIds,\n    board_names: {\n      briefing: `${cliente}- 1. BRIEFING`,\n      lp: `${cliente}- 2. CRIACAO DE LP`,\n      campanhas: `${cliente}- 3. CAMPANHAS`,\n      otimizacoes: `${cliente}- 4. OTIMIZACOES`,\n      saldo: `${cliente}- 5. SALDO`,\n    },\n    doc_url: `https://docs.google.com/document/d/${$('Adicionar Conteudo no Doc').item.json.documentId}/edit`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "id": "1dcd7e4f-f7f7-4e2a-90a7-1ae8f84a1d83",
+      "name": "Preparar Monday"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.MONDAY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation { create_workspace(name: \\\"{{ $('Preparar Monday').item.json.cliente_nome }}\\\", kind: open) { id } }\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        960,
+        0
+      ],
+      "id": "2d7bd2d9-9796-48eb-ab1a-7b038c597db3",
+      "name": "Criar Workspace Monday"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.MONDAY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation { duplicate_board(board_id: {{ $('Preparar Monday').item.json.template_ids.briefing }}, workspace_id: {{ $json.data.create_workspace.id }}, duplicate_type: duplicate_board_with_pulses, board_name: \\\"{{ $('Preparar Monday').item.json.board_names.briefing }}\\\") { board { id } } }\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1200,
+        0
+      ],
+      "id": "8d7be3b8-9d94-46ea-a21b-a7a6fc46fe05",
+      "name": "Duplicar Board Briefing"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.MONDAY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"query { boards(ids: [{{ $('Duplicar Board Briefing').item.json.data.duplicate_board.board.id }}]) { columns { id title } items_page(query_params: { rules: [{ column_id: \\\"name\\\", compare_value: [\\\"CRIAR RESUMO DO CLIENTE\\\"], operator: any_of }] }) { items { id name } } } }\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1440,
+        0
+      ],
+      "id": "9cc9d0e3-0a02-4340-b976-28e3893e5ac9",
+      "name": "Buscar Item Resumo no Briefing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const board = $json.data?.boards?.[0];\nif (!board) {\n  throw new Error('Nao consegui localizar o board de briefing duplicado.');\n}\n\nconst columns = board.columns || [];\nconst item = board.items_page?.items?.[0];\nif (!item) {\n  throw new Error('Nao achei o item CRIAR RESUMO DO CLIENTE no board de briefing.');\n}\n\nconst normalize = (value) => String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();\nconst linkColumn = columns.find((column) => {\n  const title = normalize(column.title);\n  return title.includes('link') && title.includes('briefing');\n});\n\nif (!linkColumn) {\n  throw new Error('Nao achei a coluna de Link do Briefing no board duplicado.');\n}\n\nreturn [{\n  json: {\n    board_id: $('Duplicar Board Briefing').item.json.data.duplicate_board.board.id,\n    item_id: item.id,\n    column_id: linkColumn.id,\n    doc_url: $('Preparar Monday').item.json.doc_url\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ],
+      "id": "39c42846-3ea8-4af5-a96b-8c03c108a9dd",
+      "name": "Preparar Link do Briefing"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.MONDAY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation ($board: ID!, $item: ID!, $values: String!) { change_multiple_column_values(board_id: $board, item_id: $item, column_values: $values) { id } }\",\n  \"variables\": {\n    \"board\": \"{{ $json.board_id }}\",\n    \"item\": \"{{ $json.item_id }}\",\n    \"values\": \"{\\\"{{ $json.column_id }}\\\": \\\"{{ $json.doc_url }}\\\"}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1920,
+        0
+      ],
+      "id": "8a7f13a6-e28e-48e8-8653-dbd52d4df283",
+      "name": "Atualizar Link do Doc no Briefing"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.MONDAY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation { duplicate_board(board_id: {{ $('Preparar Monday').item.json.template_ids.lp }}, workspace_id: {{ $('Criar Workspace Monday').item.json.data.create_workspace.id }}, duplicate_type: duplicate_board_with_pulses, board_name: \\\"{{ $('Preparar Monday').item.json.board_names.lp }}\\\") { board { id } } }\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2160,
+        0
+      ],
+      "id": "b873ab88-b43a-47aa-bcb5-53abdfda0d95",
+      "name": "Duplicar Board LP"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.MONDAY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation { duplicate_board(board_id: {{ $('Preparar Monday').item.json.template_ids.campanhas }}, workspace_id: {{ $('Criar Workspace Monday').item.json.data.create_workspace.id }}, duplicate_type: duplicate_board_with_pulses, board_name: \\\"{{ $('Preparar Monday').item.json.board_names.campanhas }}\\\") { board { id } } }\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2400,
+        0
+      ],
+      "id": "7277f7d4-3b21-4ca6-a04e-f10b8a611cc0",
+      "name": "Duplicar Board Campanhas"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.MONDAY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation { duplicate_board(board_id: {{ $('Preparar Monday').item.json.template_ids.otimizacoes }}, workspace_id: {{ $('Criar Workspace Monday').item.json.data.create_workspace.id }}, duplicate_type: duplicate_board_with_pulses, board_name: \\\"{{ $('Preparar Monday').item.json.board_names.otimizacoes }}\\\") { board { id } } }\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2640,
+        0
+      ],
+      "id": "dc7fc470-fbc4-4484-91ed-b93653416cfe",
+      "name": "Duplicar Board Otimizacoes"
+    },
+    {
+      "parameters": {
+        "amount": 45
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2880,
+        0
+      ],
+      "id": "7561d04b-a374-4a33-9c86-ee985ff5e80f",
+      "name": "Aguardar Antes do Saldo",
+      "webhookId": "d67d4836-52c0-4526-bb22-f5268484404b"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.MONDAY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation { duplicate_board(board_id: {{ $('Preparar Monday').item.json.template_ids.saldo }}, workspace_id: {{ $('Criar Workspace Monday').item.json.data.create_workspace.id }}, duplicate_type: duplicate_board_with_pulses, board_name: \\\"{{ $('Preparar Monday').item.json.board_names.saldo }}\\\") { board { id } } }\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3120,
+        0
+      ],
+      "id": "a4c9ff64-d7e8-4ed7-8a28-03c6a97cf4e0",
+      "name": "Duplicar Board Saldo"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    body: {\n      ok: true,\n      cliente_nome: $('Normalizar Entrada').item.json.cliente_nome,\n      prazo_entrega: $('Normalizar Entrada').item.json.prazo_entrega,\n      segmento: $('Normalizar Entrada').item.json.segmento,\n      doc_url: $('Preparar Monday').item.json.doc_url,\n      workspace_id: $('Criar Workspace Monday').item.json.data.create_workspace.id,\n      boards: {\n        briefing_id: $('Duplicar Board Briefing').item.json.data.duplicate_board.board.id,\n        lp_id: $('Duplicar Board LP').item.json.data.duplicate_board.board.id,\n        campanhas_id: $('Duplicar Board Campanhas').item.json.data.duplicate_board.board.id,\n        otimizacoes_id: $('Duplicar Board Otimizacoes').item.json.data.duplicate_board.board.id,\n        saldo_id: $('Duplicar Board Saldo').item.json.data.duplicate_board.board.id\n      },\n      message: 'Fluxo 01 concluido com sucesso.'\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        0
+      ],
+      "id": "99261d12-b677-43e3-8695-0779c77096d7",
+      "name": "Montar Resposta Final"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        3600,
+        0
+      ],
+      "id": "3b8fb708-f020-4710-baf8-85aa4f9b174a",
+      "name": "Responder Webhook"
+    }
+  ],
+  "connections": {
+    "Webhook Novo Cliente": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Entrada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Entrada": {
+      "main": [
+        [
+          {
+            "node": "Extrair TXT do Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair TXT do Briefing": {
+      "main": [
+        [
+          {
+            "node": "Preparar Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gerar Briefing IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar Briefing IA": {
+      "main": [
+        [
+          {
+            "node": "Extrair Resposta IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Resposta IA": {
+      "main": [
+        [
+          {
+            "node": "Criar Doc do Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Doc do Briefing": {
+      "main": [
+        [
+          {
+            "node": "Adicionar Conteudo no Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adicionar Conteudo no Doc": {
+      "main": [
+        [
+          {
+            "node": "Preparar Monday",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Monday": {
+      "main": [
+        [
+          {
+            "node": "Criar Workspace Monday",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Workspace Monday": {
+      "main": [
+        [
+          {
+            "node": "Duplicar Board Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicar Board Briefing": {
+      "main": [
+        [
+          {
+            "node": "Buscar Item Resumo no Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Item Resumo no Briefing": {
+      "main": [
+        [
+          {
+            "node": "Preparar Link do Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Link do Briefing": {
+      "main": [
+        [
+          {
+            "node": "Atualizar Link do Doc no Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atualizar Link do Doc no Briefing": {
+      "main": [
+        [
+          {
+            "node": "Duplicar Board LP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicar Board LP": {
+      "main": [
+        [
+          {
+            "node": "Duplicar Board Campanhas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicar Board Campanhas": {
+      "main": [
+        [
+          {
+            "node": "Duplicar Board Otimizacoes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicar Board Otimizacoes": {
+      "main": [
+        [
+          {
+            "node": "Aguardar Antes do Saldo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar Antes do Saldo": {
+      "main": [
+        [
+          {
+            "node": "Duplicar Board Saldo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicar Board Saldo": {
+      "main": [
+        [
+          {
+            "node": "Montar Resposta Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Resposta Final": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "70e9553f-46f8-4df4-a40e-1463380e2597",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "alpha-os-clean-workflow"
+  },
+  "id": "alpha-monday-express-clean",
+  "tags": []
+}
